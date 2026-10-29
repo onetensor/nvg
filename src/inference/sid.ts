@@ -52,7 +52,7 @@ export class SIDPipeline {
     await this.adapter?.initialize();
     report?.('Preparing camera GPU pipeline…');
     this.device = await this.sid.getDevice();
-    this.preprocessor = new GPUPreprocessor(this.device);
+    this.preprocessor = new GPUPreprocessor(this.device, this.cpuDisplay);
     this.gainTransform = new PseudoRawGain(this.device);
     this.temporal = new TemporalFilter(this.device);
     if (this.cpuDisplay) this.canvas2dRenderer = new Canvas2DRenderer(this.canvas, this.device);

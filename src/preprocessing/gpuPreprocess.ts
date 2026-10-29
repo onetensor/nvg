@@ -21,7 +21,7 @@ export class GPUPreprocessor {
   private frameIndex = 0;
   private statsInFlight = false;
 
-  constructor(private readonly device: GPUDevice) {
+  constructor(private readonly device: GPUDevice, private readonly useVideoFrameSource = false) {
     this.pipeline = device.createComputePipeline({
       label: 'camera to model tensor',
       layout: 'auto',
@@ -65,7 +65,18 @@ export class GPUPreprocessor {
     view.setFloat32(24, gain, true);
     this.device.queue.writeBuffer(this.params, 0, values);
 
-    const externalTexture = this.device.importExternalTexture({ source: video });
+    // WebKit has shipped camera-backed HTMLVideoElement imports that silently
+    // sample black. Importing a VideoFrame snapshot is its documented
+    // workaround and still keeps the frame on the browser's media/GPU path.
+    let videoFrame: VideoFrame | null = null;
+    if (this.useVideoFrameSource && typeof VideoFrame !== 'undefined') {
+      try {
+        videoFrame = new VideoFrame(video);
+      } catch (error) {
+        console.warn('Could not snapshot the camera as a VideoFrame; using the video element.', error);
+      }
+    }
+    const externalTexture = this.device.importExternalTexture({ source: videoFrame ?? video });
     const bindGroup = this.device.createBindGroup({
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
@@ -95,6 +106,7 @@ export class GPUPreprocessor {
       this.statsInFlight = true;
     }
     this.device.queue.submit([encoder.finish()]);
+    videoFrame?.close();
     // mapAsync must start after the copy command is submitted; mapping a buffer
     // first makes it unavailable to the command encoder on strict WebGPU implementations.
     const stats = readback
