@@ -76,12 +76,23 @@ export interface ModelAsset {
   };
 }
 
+export interface DirectModelAsset extends ModelAsset {
+  inputChannels: number;
+  width: number;
+  outputChannels?: 1 | 3;
+  /** Resolution the model is sized for; applied at start-up. */
+  defaultResolution?: Exclude<ResolutionChoice, 'auto'>;
+  name?: string;
+}
+
 export interface ModelMetadata {
   schemaVersion: number;
   sid: ModelAsset;
   sidJoint?: ModelAsset;
   /** Adapter-free SID taking 2x2-packed linear RGB (12 channels). */
-  sidDirect?: ModelAsset & { inputChannels: number; width: number; outputChannels?: 1 | 3 };
+  sidDirect?: DirectModelAsset;
+  /** Alternative direct models selectable with `?model=<name>` for comparison. */
+  directVariants?: Record<string, DirectModelAsset>;
   /** Default variant; `?model=` overrides it for on-device comparison. */
   production?: ModelVariant;
   adapter: ModelAsset & { parameterCount: number };

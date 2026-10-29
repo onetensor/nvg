@@ -17,7 +17,9 @@ from torch.utils.data import DataLoader
 from training.dataset import AdapterDataset
 from training.phone_sim import BurstDataset, PhoneSimDataset, collate_list, degrade_batch, degrade_bursts
 from training.losses import charbonnier, psnr, ssim
-from training.sid_model import SIDUNet, add_noise_level_input, direct_from_bayer, direct_input, load_sid, luma, to_mono
+from training.sid_model import (
+    SIDUNet, add_noise_level_input, direct_from_bayer, direct_input, load_sid, luma, prune_width, to_mono,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,6 +73,9 @@ def build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
             source = add_noise_level_input(source)
         if args.mono and source.out_channels == 12:
             source = to_mono(source)
+        if source.width > args.width:
+            # Distillation students start from the teacher's strongest channels.
+            source = prune_width(source, args.width)
         if source.in_channels != args.in_channels or source.width != args.width:
             raise ValueError("--init-direct does not match --in-channels/--width")
         return source.to(device)
