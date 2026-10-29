@@ -5,10 +5,16 @@ struct Params {
   visible_height: u32,
   crop_x: u32,
   crop_y: u32,
-  // 3: RGB planes; 1: a single luminance plane, shown through `tint`.
+  // 3: RGB planes; 1: a luminance plane shown through `tint`; 2: luminance
+  // plus a plane of object-outline logits.
   channels: u32,
   // Mono display: 0 = grayscale, 1 = green phosphor.
   tint: u32,
+  // 0 = off, 1 = learned (outline plane), 2 = classic (Sobel on the output).
+  outline_mode: u32,
+  outline_strength: f32,
+  _pad0: u32,
+  _pad1: u32,
 }
 
 // Green phosphor (P43-like), scaled so full luminance stays within range.
@@ -52,14 +58,40 @@ fn sample_bilinear(pixel: vec2f, channel: u32) -> f32 {
   return mix(top, bottom, fraction.y);
 }
 
+fn luminance_at(xy: vec2i) -> f32 {
+  if params.channels == 3u {
+    return dot(vec3f(channel_at(xy, 0u), channel_at(xy, 1u), channel_at(xy, 2u)), vec3f(0.2126, 0.7152, 0.0722));
+  }
+  return channel_at(xy, 0u);
+}
+
+/// Outline strength in [0, 1] around an output pixel (see readback.wgsl).
+fn outline_at(pixel: vec2f) -> f32 {
+  if params.outline_mode == 1u && params.channels == 2u {
+    return 1.0 / (1.0 + exp(-sample_bilinear(pixel, 1u)));
+  }
+  if params.outline_mode == 2u {
+    let p = vec2i(round(pixel));
+    let gx = luminance_at(p + vec2i(1, -1)) + 2.0 * luminance_at(p + vec2i(1, 0)) + luminance_at(p + vec2i(1, 1))
+      - luminance_at(p + vec2i(-1, -1)) - 2.0 * luminance_at(p + vec2i(-1, 0)) - luminance_at(p + vec2i(-1, 1));
+    let gy = luminance_at(p + vec2i(-1, 1)) + 2.0 * luminance_at(p + vec2i(0, 1)) + luminance_at(p + vec2i(1, 1))
+      - luminance_at(p + vec2i(-1, -1)) - 2.0 * luminance_at(p + vec2i(0, -1)) - luminance_at(p + vec2i(1, -1));
+    return smoothstep(0.12, 0.4, length(vec2f(gx, gy)));
+  }
+  return 0.0;
+}
+
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
   let visible = vec2f(vec2u(params.visible_width, params.visible_height));
   let crop = vec2f(vec2u(params.crop_x, params.crop_y));
   let pixel = crop + input.uv * visible - vec2f(0.5);
-  if params.channels == 1u {
-    return vec4f(clamp(mono_color(sample_bilinear(pixel, 0u)), vec3f(0.0), vec3f(1.0)), 1.0);
+  var color = mono_color(sample_bilinear(pixel, 0u));
+  if params.channels == 3u {
+    color = vec3f(sample_bilinear(pixel, 0u), sample_bilinear(pixel, 1u), sample_bilinear(pixel, 2u));
   }
-  let rgb = vec3f(sample_bilinear(pixel, 0u), sample_bilinear(pixel, 1u), sample_bilinear(pixel, 2u));
-  return vec4f(clamp(rgb, vec3f(0.0), vec3f(1.0)), 1.0);
+  // White outlines over green phosphor, amber over grayscale or colour.
+  let ink = select(vec3f(1.0, 0.75, 0.2), vec3f(1.0), params.tint == 1u && params.channels != 3u);
+  color = mix(color, ink, clamp(outline_at(pixel) * params.outline_strength, 0.0, 1.0));
+  return vec4f(clamp(color, vec3f(0.0), vec3f(1.0)), 1.0);
 }

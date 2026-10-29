@@ -423,6 +423,10 @@ class BurstDataset(Dataset[dict[str, torch.Tensor]]):
                  eval_downsample: int = 2, eval_frames: int = 1, seed: int = 0) -> None:
         self.files = sorted((Path(root) / "bursts" / split).glob("*.npz"))
         self.files = [path for path in self.files if not path.name.endswith(".partial.npz")]
+        # Teacher outline maps from build_edge_targets, when present.
+        self.outlines = Path(root) / "edges" / split
+        if not self.outlines.is_dir():
+            self.outlines = None
         if not self.files:
             raise ValueError(f"No cached {split} bursts under {root}")
         self.output_size = output_size
@@ -456,16 +460,23 @@ class BurstDataset(Dataset[dict[str, torch.Tensor]]):
                 y = x = (size - crop) // 2 // 2 * 2
             window = (slice(y, y + crop), slice(x, x + crop))
             long = _uint16_bits(data["long"][window])
+            outline = None
+            if self.outlines is not None:
+                outline = torch.from_numpy(np.load(self.outlines / self.files[index].with_suffix(".npy").name)[window].copy())[None]
             shorts = torch.stack([_uint16_bits(data[f"short_{frame:02d}"][window]) for frame in chosen])
             ratios = torch.from_numpy(ratios_all[chosen].astype(np.float32))
         if self.augment:
-            if rng.random() < 0.5:
-                long, shorts = long.flip(-1), shorts.flip(-1)
-            if rng.random() < 0.5:
-                long, shorts = long.flip(-2), shorts.flip(-2)
-            if rng.random() < 0.5:
+            transforms = [rng.random() < 0.5 for _ in range(3)]
+            for flip, dims in zip(transforms[:2], ((-1,), (-2,))):
+                if flip:
+                    long, shorts = long.flip(dims), shorts.flip(dims)
+                    outline = outline.flip(dims) if outline is not None else None
+            if transforms[2]:
                 long, shorts = long.transpose(-1, -2), shorts.transpose(-1, -2)
+                outline = outline.transpose(-1, -2) if outline is not None else None
+        extra = {"outline": outline.contiguous()} if outline is not None else {}
         return {
+            **extra,
             "long": long.contiguous(),
             "shorts": shorts.contiguous(),
             "ratios": ratios,
@@ -487,6 +498,7 @@ def degrade_bursts(
     extra_noise: float | None = None,
     accumulation_cap: int | None = None,
     target: str = "phone",
+    outlines: list[torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Simulated captures accumulated like the runtime.
 
@@ -499,6 +511,9 @@ def degrade_bursts(
     phone rendering times the runtime gain, sRGB-encoded): the model restores
     the phone's own image instead of guessing an unidentifiable ISP.
     ``target="sid"`` is the SID long exposure as LibRaw renders it.
+
+    Pass a list as ``outlines`` to collect each sample's teacher outline map,
+    area-downsampled like the image, as [1, h, w] tensors in [0, 1].
     """
     if target not in ("phone", "sid"):
         raise ValueError(f"Unknown target {target!r}")
@@ -517,6 +532,10 @@ def degrade_bursts(
         accumulated, count = emulate_accumulation(frames, cap, rng, motion=augment and rng.random() < 0.5)
         inputs.append(accumulated)
         references.append(clean if target == "phone" else sid_target)
+        if outlines is not None:
+            outline = sample["outline"].to(device, non_blocking=True).float()[None] / 255.0
+            downsample = int(sample["downsample"])
+            outlines.append(F.avg_pool2d(outline, downsample)[0] if downsample > 1 else outline[0])
         counts.append(count)
         # The runtime measures gain on the current frame, before accumulation.
         currents.append(frames[-1])

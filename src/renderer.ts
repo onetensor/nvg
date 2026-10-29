@@ -2,7 +2,19 @@ import postprocessShader from '../shaders/postprocess.wgsl?raw';
 import readbackShader from '../shaders/readback.wgsl?raw';
 import type { DisplayOptions, ModelGeometry, OutputStats, PresentationStats } from './types';
 
-const RGB_DISPLAY: DisplayOptions = { channels: 3, tint: 'gray' };
+const RGB_DISPLAY: DisplayOptions = { channels: 3, tint: 'gray', outline: 'off' };
+const OUTLINE_MODES = { off: 0, learned: 1, classic: 2 } as const;
+
+/** The 48-byte display uniform shared by readback.wgsl and postprocess.wgsl. */
+function displayParams(geometry: ModelGeometry, display: DisplayOptions): ArrayBuffer {
+  const values = new ArrayBuffer(48);
+  const view = new DataView(values);
+  [geometry.paddedWidth, geometry.paddedHeight, geometry.width, geometry.height, geometry.cropX, geometry.cropY,
+    display.channels, display.tint === 'green' ? 1 : 0, OUTLINE_MODES[display.outline]]
+    .forEach((value, index) => view.setUint32(index * 4, value, true));
+  view.setFloat32(36, 1.0, true);
+  return values;
+}
 
 class RollingAverage {
   private readonly values: number[] = [];
@@ -62,7 +74,7 @@ export class Canvas2DRenderer {
     });
     this.params = device.createBuffer({
       label: 'SID readback parameters',
-      size: 32,
+      size: 48,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Production exposes 180p and 360p. Three staging buffers let mapping
@@ -100,16 +112,7 @@ export class Canvas2DRenderer {
       this.presentationDropped += 1;
       return this.lastStats;
     }
-    const values = new Uint32Array([
-      geometry.paddedWidth,
-      geometry.paddedHeight,
-      geometry.width,
-      geometry.height,
-      geometry.cropX,
-      geometry.cropY,
-      display.channels,
-      display.tint === 'green' ? 1 : 0,
-    ]);
+    const values = displayParams(geometry, display);
     this.device.queue.writeBuffer(this.params, 0, values);
     if (!this.bindGroup || this.source !== image) {
       this.source = image;
@@ -251,7 +254,7 @@ export class WebGPURenderer {
       fragment: { module, entryPoint: 'fragment_main', targets: [{ format: this.format }] },
       primitive: { topology: 'triangle-list' },
     });
-    this.params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.params = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
   render(buffer: GPUBuffer, geometry: ModelGeometry, display: DisplayOptions = RGB_DISPLAY): void {
@@ -260,16 +263,7 @@ export class WebGPURenderer {
       // changes. Explicitly reconfigure it before requesting the next texture.
       this.context.configure({ device: this.device, format: this.format, alphaMode: 'opaque' });
     }
-    const values = new Uint32Array([
-      geometry.paddedWidth,
-      geometry.paddedHeight,
-      geometry.width,
-      geometry.height,
-      geometry.cropX,
-      geometry.cropY,
-      display.channels,
-      display.tint === 'green' ? 1 : 0,
-    ]);
+    const values = displayParams(geometry, display);
     this.device.queue.writeBuffer(this.params, 0, values);
     if (!this.bindGroup || this.source !== buffer) {
       this.source = buffer;

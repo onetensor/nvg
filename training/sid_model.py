@@ -137,6 +137,31 @@ def to_mono(source: SIDUNet) -> SIDUNet:
     return model
 
 
+def add_outline_head(source: SIDUNet, initial_logit: float = -2.0) -> SIDUNet:
+    """A copy with a second output plane of object-outline logits.
+
+    The image plane keeps its exact weights; the outline plane starts with
+    near-zero weights and a negative bias (few outlines) so step 0 reproduces
+    the source image.
+    """
+    if source.out_channels != 4:
+        raise ValueError("Outlines are added to luminance-only (4-channel head) models")
+    model = SIDUNet(in_channels=source.in_channels, width=source.width, out_channels=8)
+    state = {key: value.clone() for key, value in source.state_dict().items()}
+    weight, bias = state["conv10.weight"], state["conv10.bias"]
+    state["conv10.weight"] = torch.cat((weight, torch.randn_like(weight) * 1e-3))
+    state["conv10.bias"] = torch.cat((bias, torch.full_like(bias, initial_logit)))
+    model.load_state_dict(state, strict=True)
+    return model
+
+
+def balanced_outline_loss(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """Class-balanced BCE (as in HED) on soft outline targets in [0, 1]."""
+    positive = targets.mean().clamp(0.01, 0.99)
+    weights = targets * (1 - positive) + (1 - targets) * positive
+    return F.binary_cross_entropy_with_logits(logits, targets, weight=weights) / (2 * positive * (1 - positive))
+
+
 def prune_width(source: SIDUNet, width: int) -> SIDUNet:
     """Structured pruning to a narrower U-Net that keeps the source's strongest channels.
 

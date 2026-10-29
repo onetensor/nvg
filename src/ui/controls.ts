@@ -23,6 +23,7 @@ export interface Controls {
   target: HTMLSelectElement;
   temporal: HTMLSelectElement;
   tint: HTMLSelectElement;
+  outline: HTMLSelectElement;
   debug: HTMLInputElement;
   debugOverlay: HTMLElement;
   capture: HTMLButtonElement;
@@ -54,6 +55,7 @@ export function controls(): Controls {
     target: required('#target-fps'),
     temporal: required('#temporal'),
     tint: required('#tint'),
+    outline: required('#outline'),
     debug: required('#debug'),
     debugOverlay: required('#debug-overlay'),
     capture: required('#capture'),

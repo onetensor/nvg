@@ -78,6 +78,8 @@ def main() -> None:
                 tiles = [luma(shown) if args.luma else shown]
                 for name, model in models.items():
                     prediction = model(direct_input(model, inputs, gain, counts)).clamp(0, 1)
+                    if prediction.shape[1] == 2:  # luma + outline logits
+                        prediction = prediction[:, :1]
                     if args.luma and prediction.shape[1] == 3:
                         prediction = luma(prediction)
                     if prediction.shape[1] != targets.shape[1]:

@@ -70,48 +70,117 @@
   },
   "sidDirect": {
     "available": true,
-    "url": "./models/sid-direct-mono13.onnx",
-    "sha256": "c2b4fd7d457d4e89d5163aacf7f5723d5afebbb2a29ec46a7ce7ba5b94e5996c",
+    "url": "./models/sid-direct-mono-w12.onnx",
+    "sha256": "ed88db9a374f549b7d5d635a143662e3b9e643605db4ce3febfabb6a639c43b1",
     "inputName": "input",
     "outputName": "output",
     "inputLayout": "NCHW",
-    "description": "Luminance-only restoration SID: 12 packed linear RGB planes plus a 1/sqrt(frames averaged) noise-level plane in, the noise-free phone image's luma out; trained on accumulated SID bursts through a simulated iPhone pipeline",
+    "description": "Width-12 mono restoration SID for 360p, structurally pruned from and distilled by the width-32 mono model",
+    "name": "Mono SID 360p",
     "inputChannels": 13,
     "outputChannels": 1,
-    "width": 32,
+    "width": 12,
+    "defaultResolution": "360p",
     "fp16": {
       "available": true,
-      "url": "./models/sid-direct-mono13-fp16.onnx",
-      "sha256": "425dc295ff05218fea863d15edce77e3f05d8d5f1a61d5e6da3574f7b529ff6f",
-      "mae": 0.0001363032815788756,
-      "maxError": 0.0003333091735839844
+      "url": "./models/sid-direct-mono-w12-fp16.onnx",
+      "sha256": "f1a8bd20b59bba9d1bf5d76f570381df4c89a71acb51ac7ca4a7329e350bc936",
+      "mae": 6.910647607583087e-05,
+      "maxError": 0.00026357173919677734
     },
     "evaluation": {
-      "note": "Held-out SID test bursts through the simulated iPhone pipeline, scored in luma against the noise-free phone rendering; 'fit' is PSNR after a per-image gain+offset (fair to models trained for SID's brightness convention). n2 = 2 photons at the median, very dark.",
-      "samples": 100,
+      "note": "Held-out test bursts, very dark (n2), luma, scored at 360p against the clean phone rendering; the 180p model's output is upscaled 2x.",
       "f1_n2": {
-        "psnr": 21.41,
-        "ssim": 0.682,
-        "lpips": 0.339,
-        "fitPsnr": 26.05,
-        "previousDirect": {
-          "psnr": 13.83,
-          "ssim": 0.481,
-          "lpips": 0.504,
-          "fitPsnr": 23.64
+        "psnr": 20.99,
+        "ssim": 0.664,
+        "lpips": 0.383,
+        "w32At180p": {
+          "psnr": 19.929,
+          "ssim": 0.638,
+          "lpips": 0.497
         }
       },
       "f8_n2": {
-        "psnr": 22.69,
-        "ssim": 0.747,
-        "lpips": 0.281,
-        "fitPsnr": 27.87,
-        "previousDirect": {
-          "psnr": 15.79,
-          "ssim": 0.574,
-          "lpips": 0.438,
-          "fitPsnr": 24.36
+        "psnr": 22.33,
+        "ssim": 0.724,
+        "lpips": 0.327,
+        "w32At180p": {
+          "psnr": 21.407,
+          "ssim": 0.69,
+          "lpips": 0.466
         }
+      }
+    }
+  },
+  "directVariants": {
+    "mono-w32": {
+      "available": true,
+      "url": "./models/sid-direct-mono13.onnx",
+      "sha256": "c2b4fd7d457d4e89d5163aacf7f5723d5afebbb2a29ec46a7ce7ba5b94e5996c",
+      "inputName": "input",
+      "outputName": "output",
+      "inputLayout": "NCHW",
+      "description": "Luminance-only restoration SID: 12 packed linear RGB planes plus a 1/sqrt(frames averaged) noise-level plane in, the noise-free phone image's luma out; trained on accumulated SID bursts through a simulated iPhone pipeline",
+      "inputChannels": 13,
+      "outputChannels": 1,
+      "width": 32,
+      "fp16": {
+        "available": true,
+        "url": "./models/sid-direct-mono13-fp16.onnx",
+        "sha256": "425dc295ff05218fea863d15edce77e3f05d8d5f1a61d5e6da3574f7b529ff6f",
+        "mae": 0.0001363032815788756,
+        "maxError": 0.0003333091735839844
+      },
+      "evaluation": {
+        "note": "Held-out SID test bursts through the simulated iPhone pipeline, scored in luma against the noise-free phone rendering; 'fit' is PSNR after a per-image gain+offset (fair to models trained for SID's brightness convention). n2 = 2 photons at the median, very dark.",
+        "samples": 100,
+        "f1_n2": {
+          "psnr": 21.41,
+          "ssim": 0.682,
+          "lpips": 0.339,
+          "fitPsnr": 26.05,
+          "previousDirect": {
+            "psnr": 13.83,
+            "ssim": 0.481,
+            "lpips": 0.504,
+            "fitPsnr": 23.64
+          }
+        },
+        "f8_n2": {
+          "psnr": 22.69,
+          "ssim": 0.747,
+          "lpips": 0.281,
+          "fitPsnr": 27.87,
+          "previousDirect": {
+            "psnr": 15.79,
+            "ssim": 0.574,
+            "lpips": 0.438,
+            "fitPsnr": 24.36
+          }
+        }
+      },
+      "name": "Mono SID 180p",
+      "defaultResolution": "180p"
+    },
+    "mono-w8": {
+      "available": true,
+      "url": "./models/sid-direct-mono-w8.onnx",
+      "sha256": "d3ec704cfd9ae7792c703eb323cbcf2985c78e1b21ea3bb9c33b7c02e5c0a0b0",
+      "inputName": "input",
+      "outputName": "output",
+      "inputLayout": "NCHW",
+      "description": "Width-8 mono restoration SID for 360p (faster fallback)",
+      "name": "Mono SID 360p fast",
+      "inputChannels": 13,
+      "outputChannels": 1,
+      "width": 8,
+      "defaultResolution": "360p",
+      "fp16": {
+        "available": true,
+        "url": "./models/sid-direct-mono-w8-fp16.onnx",
+        "sha256": "1539c3f732b9d58f9606d3e90548f5b322d9a52fb94064002a5f62bd2f54e334",
+        "mae": 0.0001605954407750687,
+        "maxError": 0.00029659271240234375
       }
     }
   },
