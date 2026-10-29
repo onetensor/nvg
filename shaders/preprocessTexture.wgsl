@@ -6,7 +6,7 @@ struct Params {
   mode: u32,
   collect_stats: u32,
   gain: f32,
-  _pad0: f32,
+  quarter_turns: u32,
   uv_scale_x: f32,
   uv_scale_y: f32,
   _pad1: f32,
@@ -26,9 +26,20 @@ fn linearize(value: f32) -> f32 {
   return pow((value + 0.055) / 1.055, 2.4);
 }
 
+// Maps upright display UV to the copied buffer, which Safari may deliver as the
+// unrotated sensor image. quarter_turns is the clockwise display rotation.
+fn buffer_uv(uv: vec2f) -> vec2f {
+  switch params.quarter_turns {
+    case 1u: { return vec2f(uv.y, 1.0 - uv.x); }
+    case 2u: { return vec2f(1.0) - uv; }
+    case 3u: { return vec2f(1.0 - uv.y, uv.x); }
+    default: { return uv; }
+  }
+}
+
 fn linear_rgb(uv: vec2f) -> vec3f {
   let covered_uv = (uv - vec2f(0.5)) * vec2f(params.uv_scale_x, params.uv_scale_y) + vec2f(0.5);
-  let encoded = textureSampleLevel(camera_frame, camera_sampler, covered_uv, 0.0).rgb;
+  let encoded = textureSampleLevel(camera_frame, camera_sampler, buffer_uv(covered_uv), 0.0).rgb;
   return vec3f(linearize(encoded.r), linearize(encoded.g), linearize(encoded.b));
 }
 
@@ -73,4 +84,25 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   output[2u * plane + index] = clamp(p11.b * params.gain, 0.0, 1.0);
   output[3u * plane + index] = clamp(p10.g * params.gain, 0.0, 1.0);
   record_luminance((p00 + p01 + p10 + p11) * 0.25);
+}
+
+// Orientation calibration: 16x16 cell averages of the copied buffer in buffer
+// space (no cover crop or rotation), compared on the CPU against an upright
+// Canvas2D reference. Values stay sRGB-encoded to match getImageData().
+@group(0) @binding(5) var<storage, read_write> thumbnail_cells: array<f32, 768>;
+
+@compute @workgroup_size(16, 16)
+fn thumbnail(@builtin(local_invocation_id) lid: vec3u) {
+  var sum = vec3f(0.0);
+  for (var j = 0u; j < 8u; j += 1u) {
+    for (var i = 0u; i < 8u; i += 1u) {
+      let uv = (vec2f(lid.xy) + (vec2f(vec2u(i, j)) + vec2f(0.5)) / 8.0) / 16.0;
+      sum += textureSampleLevel(camera_frame, camera_sampler, uv, 0.0).rgb;
+    }
+  }
+  let cell = (lid.y * 16u + lid.x) * 3u;
+  let average = sum / 64.0;
+  thumbnail_cells[cell] = average.r;
+  thumbnail_cells[cell + 1u] = average.g;
+  thumbnail_cells[cell + 2u] = average.b;
 }

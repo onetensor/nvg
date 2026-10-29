@@ -6,7 +6,7 @@ import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
 import { isAppleMobileWebKit } from './platform';
 import { formatDebug, Profiler } from './profiler';
-import type { AdapterMode, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
+import type { AdapterMode, LuminanceStats, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
 import { applyView, controls, selectedValues, setStatus } from './ui/controls';
 
 const ui = controls();
@@ -26,7 +26,7 @@ let frameErrors = 0;
 let activeModel: ModelVariant = 'joint';
 let metadataPromise: Promise<ModelMetadata> | null = null;
 let outputStats: PipelineResult['outputStats'];
-let inputStats: PipelineResult['stats'];
+let inputStats: LuminanceStats | undefined;
 let cameraInputPath: PipelineResult['cameraInputPath'];
 let presentation: PipelineResult['presentation'];
 
@@ -206,18 +206,30 @@ async function processFrame(now: number): Promise<void> {
     return;
   }
   const state = selectedValues(ui);
+  if (!pipeline.ready) {
+    // The GPU has not finished the frames already queued. Skipping here costs
+    // nothing; processing anyway would only grow the queue and drop the result.
+    profiler.frameSkipped();
+    updateDebug(now, state.adapter);
+    return;
+  }
   try {
     const result = await pipeline.process(ui.video, geometry, state.adapter, currentGain, state.temporal);
     if (result.outputStats) outputStats = result.outputStats;
-    if (result.stats) inputStats = result.stats;
     cameraInputPath = result.cameraInputPath;
     presentation = result.presentation;
     profiler.frameProcessed(result.timing);
     frameErrors = 0;
-    if (result.stats && ui.autoGain.checked) {
-      currentGain = autoGain.update(result.stats);
+    result.stats?.then((stats) => {
+      inputStats = stats;
+      if (!ui.autoGain.checked) return;
+      currentGain = autoGain.update(stats);
       updateGainUi();
-    }
+    }).catch((error: unknown) => {
+      // A camera-path failure is stored by the preprocessor and rethrown by the
+      // next frame, which routes it through the normal error handling below.
+      console.warn('Input statistics readback failed.', error);
+    });
     if (state.resolution === 'auto') {
       const changed = adaptiveResolution.observe(result.timing.total, targetBudget(state.target));
       if (changed) {
