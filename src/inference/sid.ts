@@ -2,7 +2,7 @@ import type { InferenceTensor } from './backend';
 import { ONNXWebGPUBackend } from './onnxWebgpu';
 import { PseudoRawGain } from './adapter';
 import { GPUPreprocessor } from '../preprocessing/gpuPreprocess';
-import { TemporalFilter } from '../temporal';
+import { TemporalAccumulator } from '../temporal';
 import { Canvas2DRenderer, WebGPURenderer } from '../renderer';
 import type { AdapterMode, ModelGeometry, ModelMetadata, PipelineResult, TemporalLevel } from '../types';
 
@@ -12,7 +12,7 @@ export class SIDPipeline {
   private device!: GPUDevice;
   private preprocessor!: GPUPreprocessor;
   private gainTransform!: PseudoRawGain;
-  private temporal!: TemporalFilter;
+  private temporal!: TemporalAccumulator;
   private renderer!: WebGPURenderer;
   private canvas2dRenderer!: Canvas2DRenderer;
   private initialized = false;
@@ -57,7 +57,7 @@ export class SIDPipeline {
     this.preprocessor = new GPUPreprocessor(this.device, this.cpuDisplay);
     await this.preprocessor.initialize();
     this.gainTransform = new PseudoRawGain(this.device);
-    this.temporal = new TemporalFilter(this.device);
+    this.temporal = new TemporalAccumulator(this.device);
     if (this.cpuDisplay) this.canvas2dRenderer = new Canvas2DRenderer(this.canvas, this.device);
     else this.renderer = new WebGPURenderer(this.canvas, this.device);
     this.initialized = true;
@@ -76,6 +76,7 @@ export class SIDPipeline {
 
     const preprocessStart = performance.now();
     const prepared = await this.preprocessor.prepare(video, geometry, mode, gain);
+    this.temporal.apply(prepared.buffer, prepared.dims, temporalLevel);
     const inputBackend = mode === 'learned' ? this.adapter! : this.sid;
     const input = inputBackend.tensorFromGpuBuffer(prepared.buffer, prepared.dims);
     const preprocess = performance.now() - preprocessStart;
@@ -110,13 +111,7 @@ export class SIDPipeline {
         // not wait for Safari's slow GPU-to-CPU presentation boundary.
         outputStats = this.canvas2dRenderer.render(sidOutput.gpuBuffer, geometry);
       } else {
-        const displayBuffer = this.temporal.apply(
-          sidOutput.gpuBuffer,
-          geometry.paddedWidth,
-          geometry.paddedHeight,
-          temporalLevel,
-        );
-        this.renderer.render(displayBuffer, geometry);
+        this.renderer.render(sidOutput.gpuBuffer, geometry);
         await this.device.queue.onSubmittedWorkDone();
       }
       const postprocess = performance.now() - postStart;

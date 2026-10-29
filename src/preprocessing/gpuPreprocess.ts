@@ -19,6 +19,7 @@ export interface PreparedFrame {
 const HISTOGRAM_BINS = 257;
 const HISTOGRAM_BYTES = HISTOGRAM_BINS * 4;
 const HISTOGRAM_INTERVAL = 30;
+const BLACK_BINS = Math.ceil(Math.sqrt(4 / 255) * 255);
 const zeroHistogram = new Uint32Array(HISTOGRAM_BINS);
 const THUMBNAIL_CELLS = CALIBRATION_GRID * CALIBRATION_GRID;
 const THUMBNAIL_BYTES = THUMBNAIL_CELLS * 3 * 4;
@@ -465,7 +466,9 @@ export class GPUPreprocessor {
     this.cameraTexture = this.device.createTexture({
       label: 'copied iPhone camera frame',
       size: [width, height, 1],
-      format: 'rgba8unorm',
+      // The -srgb view makes sampling and bilinear filtering happen in linear
+      // light, which the area-filtered downsampling relies on.
+      format: 'rgba8unorm-srgb',
       // WebGPU requires RENDER_ATTACHMENT as well as COPY_DST for
       // copyExternalImageToTexture(), even though this code never renders to it.
       usage: GPUTextureUsage.COPY_DST |
@@ -535,13 +538,17 @@ export class GPUPreprocessor {
       let found50 = false;
       let found90 = false;
       bins.forEach((count, index) => {
-        weighted += count * index / 255;
+        // Bins are sqrt-spaced in linear luminance (see record_luminance).
+        const luminance = ((index + 0.5) / 255) ** 2;
+        weighted += count * luminance;
         cumulative += count;
-        if (!found10 && cumulative >= total * 0.1) { p10 = index / 255; found10 = true; }
-        if (!found50 && cumulative >= total * 0.5) { p50 = index / 255; found50 = true; }
-        if (!found90 && cumulative >= total * 0.9) { p90 = index / 255; found90 = true; }
+        if (!found10 && cumulative >= total * 0.1) { p10 = luminance; found10 = true; }
+        if (!found50 && cumulative >= total * 0.5) { p50 = luminance; found50 = true; }
+        if (!found90 && cumulative >= total * 0.9) { p90 = luminance; found90 = true; }
       });
-      const black = (bins[0] ?? 0) + (bins[1] ?? 0) + (bins[2] ?? 0) + (bins[3] ?? 0);
+      // Near-black keeps its previous meaning: linear luminance below 4/255.
+      let black = 0;
+      for (let index = 0; index < BLACK_BINS; index += 1) black += bins[index] ?? 0;
       const stats = {
         mean: weighted / total,
         p10,
