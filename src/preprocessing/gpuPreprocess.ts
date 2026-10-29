@@ -147,13 +147,16 @@ export class GPUPreprocessor {
     geometry: ModelGeometry,
     mode: AdapterMode,
     gain: number,
+    directChannels = 12,
   ): Promise<PreparedFrame> {
     if (this.inputFailure) throw new Error(this.inputFailure);
     const pipeline = await this.pipelinePromise;
     const learned = mode === 'learned';
     const width = learned ? geometry.paddedWidth : geometry.rawWidth;
     const height = learned ? geometry.paddedHeight : geometry.rawHeight;
-    const channels = learned ? 3 : mode === 'direct' ? 12 : 4;
+    // Direct models with 13 channels get a noise-level plane, filled later by
+    // the temporal accumulator.
+    const channels = learned ? 3 : mode === 'direct' ? directChannels : 4;
     const count = width * height * channels;
     this.ensureOutput(count * 4);
 

@@ -90,6 +90,35 @@ def packed_linear_rgb(linear_rgb: torch.Tensor, gain: torch.Tensor | float) -> t
     return (F.pixel_unshuffle(linear_rgb, 2) * gain).clamp(0, 1)
 
 
+def direct_input(
+    model: SIDUNet,
+    linear_rgb: torch.Tensor,
+    gain: torch.Tensor | float,
+    counts: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Packed input, plus a noise-level plane 1/sqrt(frames averaged) for 13-channel models."""
+    packed = packed_linear_rgb(linear_rgb, gain)
+    if model.in_channels == 12:
+        return packed
+    if model.in_channels != 13:
+        raise ValueError(f"Unsupported direct model with {model.in_channels} input channels")
+    if counts is None:
+        counts = torch.ones(packed.shape[0], *packed.shape[-2:], device=packed.device)
+    return torch.cat((packed, counts[:, None].clamp_min(1).rsqrt()), dim=1)
+
+
+def add_noise_level_input(source: SIDUNet) -> SIDUNet:
+    """A 13-channel copy of a 12-channel direct model whose extra plane starts at zero weight."""
+    if source.in_channels != 12:
+        raise ValueError("Source must be a 12-channel direct model")
+    model = SIDUNet(in_channels=13, width=source.width)
+    state = {key: value.clone() for key, value in source.state_dict().items()}
+    weight = state["conv1_1.weight"]
+    state["conv1_1.weight"] = torch.cat((weight, torch.zeros_like(weight[:, :1])), dim=1)
+    model.load_state_dict(state, strict=True)
+    return model
+
+
 def direct_from_bayer(source: SIDUNet) -> SIDUNet:
     """A 12-channel SID that initially reproduces ``source`` on the deterministic pseudo-Bayer input."""
     if source.in_channels != 4:

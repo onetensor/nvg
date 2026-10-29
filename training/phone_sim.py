@@ -58,17 +58,16 @@ def runtime_auto_gain(linear_rgb: torch.Tensor) -> torch.Tensor:
 
 
 def _gaussian_blur(image: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Separable Gaussian blur of every plane of an [..., H, W] tensor."""
     radius = max(1, int(round(sigma * 2.5)))
     offsets = torch.arange(-radius, radius + 1, dtype=image.dtype, device=image.device)
     kernel = torch.exp(-0.5 * (offsets / sigma) ** 2)
     kernel = kernel / kernel.sum()
-    channels = image.shape[0]
-    value = image[None]
-    value = F.conv2d(F.pad(value, (radius, radius, 0, 0), mode="replicate"),
-                     kernel.view(1, 1, 1, -1).repeat(channels, 1, 1, 1), groups=channels)
-    value = F.conv2d(F.pad(value, (0, 0, radius, radius), mode="replicate"),
-                     kernel.view(1, 1, -1, 1).repeat(channels, 1, 1, 1), groups=channels)
-    return value[0]
+    shape = image.shape
+    value = image.reshape(-1, 1, shape[-2], shape[-1])
+    value = F.conv2d(F.pad(value, (radius, radius, 0, 0), mode="replicate"), kernel.view(1, 1, 1, -1))
+    value = F.conv2d(F.pad(value, (0, 0, radius, radius), mode="replicate"), kernel.view(1, 1, -1, 1))
+    return value.reshape(shape)
 
 
 # Standard JPEG (ITU-T T.81 Annex K) quantization tables.
@@ -93,19 +92,20 @@ def _dct_matrix(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
 
 
 def _quantize_blocks(plane: torch.Tensor, table: torch.Tensor, dct: torch.Tensor) -> torch.Tensor:
-    height, width = plane.shape
-    blocks = plane.reshape(height // 8, 8, width // 8, 8).permute(0, 2, 1, 3)
+    """8x8 DCT quantization of every [..., H, W] plane."""
+    *lead, height, width = plane.shape
+    blocks = plane.reshape(*lead, height // 8, 8, width // 8, 8).transpose(-3, -2)
     coefficients = dct @ blocks @ dct.T
     coefficients = torch.round(coefficients / table) * table
     restored = dct.T @ coefficients @ dct
-    return restored.permute(0, 2, 1, 3).reshape(height, width)
+    return restored.transpose(-3, -2).reshape(*lead, height, width)
 
 
 def jpeg_like(encoded: torch.Tensor, quality: int) -> torch.Tensor:
     """Baseline-JPEG-style compression (YCbCr, 4:2:0, 8x8 DCT quantization) in torch.
 
-    Stands in for H.264/HEVC block artifacts and chroma loss. Height and width
-    must be multiples of 16.
+    Stands in for H.264/HEVC block artifacts and chroma loss. ``encoded`` is
+    [..., 3, H, W] with H and W multiples of 16.
     """
     device, dtype = encoded.device, encoded.dtype
     scale = 5000 / quality if quality < 50 else 200 - 2 * quality
@@ -115,19 +115,119 @@ def jpeg_like(encoded: torch.Tensor, quality: int) -> torch.Tensor:
     chroma_table = torch.clamp(torch.floor((chroma_table * scale + 50) / 100), 1, 255)
     dct = _dct_matrix(device, dtype)
 
-    red, green, blue = encoded * 255
+    lead = encoded.shape[:-3]
+    height, width = encoded.shape[-2:]
+    red, green, blue = (encoded * 255).unbind(-3)
     y = 0.299 * red + 0.587 * green + 0.114 * blue
     cb = -0.168736 * red - 0.331264 * green + 0.5 * blue
     cr = 0.5 * red - 0.418688 * green - 0.081312 * blue
-    cb = F.avg_pool2d(cb[None, None], 2)[0, 0]
-    cr = F.avg_pool2d(cr[None, None], 2)[0, 0]
+
+    def resample(plane: torch.Tensor, down: bool) -> torch.Tensor:
+        flat = plane.reshape(-1, 1, *plane.shape[-2:])
+        flat = F.avg_pool2d(flat, 2) if down else F.interpolate(flat, scale_factor=2, mode="bilinear", align_corners=False)
+        return flat.reshape(*lead, *flat.shape[-2:])
+
     y = _quantize_blocks(y - 128, luma_table, dct) + 128
-    cb = _quantize_blocks(cb, chroma_table, dct)
-    cr = _quantize_blocks(cr, chroma_table, dct)
-    cb = F.interpolate(cb[None, None], scale_factor=2, mode="bilinear", align_corners=False)[0, 0]
-    cr = F.interpolate(cr[None, None], scale_factor=2, mode="bilinear", align_corners=False)[0, 0]
-    rgb = torch.stack((y + 1.402 * cr, y - 0.344136 * cb - 0.714136 * cr, y + 1.772 * cb))
+    cb = resample(_quantize_blocks(resample(cb, True), chroma_table, dct), False)
+    cr = resample(_quantize_blocks(resample(cr, True), chroma_table, dct), False)
+    rgb = torch.stack((y + 1.402 * cr, y - 0.344136 * cb - 0.714136 * cr, y + 1.772 * cb), dim=-3)
+    assert rgb.shape[-2:] == (height, width)
     return (torch.round(rgb.clamp(0, 255)) / 255).to(dtype)
+
+
+def _luma_chroma(encoded: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    red, green, blue = encoded.unbind(-3)
+    y = 0.299 * red + 0.587 * green + 0.114 * blue
+    return y, blue - y, red - y
+
+
+def _from_luma_chroma(y: torch.Tensor, cb: torch.Tensor, cr: torch.Tensor) -> torch.Tensor:
+    red = y + cr
+    blue = y + cb
+    green = (y - 0.299 * red - 0.114 * blue) / 0.587
+    return torch.stack((red, green, blue), dim=-3)
+
+
+def simulate_phone_burst(
+    shorts_encoded: torch.Tensor,
+    ratios: torch.Tensor,
+    long_encoded: torch.Tensor,
+    rng: random.Random,
+    downsample: int,
+    extra_noise: float | None = None,
+    isp: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Simulates iPhone video frames of a static scene.
+
+    ``shorts_encoded`` is [K, 3, H, W]: independent short exposures of one
+    scene. One set of phone exposure and ISP parameters applies to the whole
+    burst, as it would to consecutive video frames; noise and compression are
+    per frame. ``extra_noise`` is the median photon count of an added
+    shot/read-noise stage (None draws it at random during training, 0 disables
+    it). Returns (runtime linear RGB frames [K, 3, h, w], BT.709 target [3, h, w]).
+    """
+    device = shorts_encoded.device
+    linear = libraw_decode(shorts_encoded)
+
+    # iOS auto-exposure brightens the dark frames but leaves 2-100x for our
+    # gain; each short is normalized by its own exposure ratio.
+    exposure = rng.uniform(0.3, 2.0)
+    phone_gain = (ratios.to(device) / 10 ** exposure).clamp_min(1.0)
+    value = linear * phone_gain[:, None, None, None]
+
+    # A phone sensor at 1/30 s collects far fewer photons than the Sony at
+    # 0.033-0.1 s. Add shot (Poisson) and read (Gaussian) noise calibrated by
+    # the photon count at the median signal to cover darker captures.
+    photons = extra_noise
+    if photons is None:
+        photons = 10 ** rng.uniform(math.log10(1.5), math.log10(80)) if rng.random() < 0.6 else 0.0
+    if photons:
+        scale = photons / value.median().clamp_min(1e-4)
+        read = 10 ** rng.uniform(math.log10(0.3), math.log10(4.0)) if extra_noise is None else 1.0
+        value = (torch.poisson((value * scale).clamp_min(0)) + torch.randn_like(value) * read) / scale
+
+    # Camera ISP: white balance and color matrix error, tone curve with shadow
+    # lift, black crush, highlight roll, chroma and luma noise reduction, and
+    # sharpening. ``isp=False`` keeps only the sRGB encoding.
+    if isp:
+        white_balance = torch.tensor(
+            [rng.uniform(0.85, 1.18), rng.uniform(0.94, 1.06), rng.uniform(0.82, 1.2)], device=device)
+        value = value * white_balance[:, None, None]
+        matrix = torch.eye(3, device=device) + torch.tensor(
+            [[rng.gauss(0, 0.02) for _ in range(3)] for _ in range(3)], device=device)
+        value = torch.einsum("ij,kjhw->kihw", matrix, value)
+    encoded = srgb_encode(value.clamp(0, 1))
+    if isp:
+        encoded = encoded.pow(rng.uniform(0.85, 1.15))
+        if rng.random() < 0.5:
+            # Local tone mapping lifts shadows; a global log curve stands in.
+            lift = rng.uniform(1.0, 8.0)
+            encoded = torch.log1p(lift * encoded) / math.log1p(lift)
+        black = rng.uniform(0.0, 0.03)
+        white = rng.uniform(0.9, 1.05)
+        encoded = ((encoded - black) / (white - black)).clamp(0, 1)
+        y, cb, cr = _luma_chroma(encoded)
+        if rng.random() < 0.5:
+            sigma = rng.uniform(0.8, 2.5)
+            cb, cr = _gaussian_blur(cb, sigma), _gaussian_blur(cr, sigma)
+        if rng.random() < 0.45:
+            y = _gaussian_blur(y, rng.uniform(0.4, 1.2))
+        if rng.random() < 0.5:
+            y = y + rng.uniform(0.3, 1.2) * (y - _gaussian_blur(y, rng.uniform(0.6, 1.5)))
+        encoded = _from_luma_chroma(y, cb, cr).clamp(0, 1)
+
+    # 8-bit video, often with block compression.
+    encoded = torch.round(encoded * 255) / 255
+    if isp and rng.random() < 0.6:
+        encoded = jpeg_like(encoded, rng.randint(55, 92))
+
+    # Runtime: inverse sRGB, then area downsampling in linear light.
+    runtime = inverse_srgb(encoded)
+    target_linear = libraw_decode(long_encoded)
+    if downsample > 1:
+        runtime = F.avg_pool2d(runtime, downsample)
+        target_linear = F.avg_pool2d(target_linear[None], downsample)[0]
+    return runtime.contiguous(), libraw_encode(target_linear).contiguous()
 
 
 def simulate_phone_capture(
@@ -137,41 +237,46 @@ def simulate_phone_capture(
     rng: random.Random,
     downsample: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Returns (runtime linear RGB input, BT.709-encoded target)."""
-    device = short_encoded.device
-    linear = libraw_decode(short_encoded)
+    """Single-frame capture with the original (pre-burst) degradation: no extra noise."""
+    frames, target = simulate_phone_burst(
+        short_encoded[None], torch.tensor([exposure_ratio]), long_encoded, rng, downsample, extra_noise=0.0)
+    return frames[0], target
 
-    # iOS auto-exposure brightens the dark frame but leaves 2-100x for our gain.
-    phone_gain = exposure_ratio / 10 ** rng.uniform(0.3, 2.0)
-    value = linear * max(phone_gain, 1.0)
 
-    # Camera ISP: white balance and color matrix error, tone curve, black
-    # crush, highlight roll, optional noise-reduction blur.
-    white_balance = torch.tensor(
-        [rng.uniform(0.85, 1.18), rng.uniform(0.94, 1.06), rng.uniform(0.82, 1.2)], device=device)[:, None, None]
-    value = value * white_balance
-    matrix = torch.eye(3, device=device) + torch.tensor(
-        [[rng.gauss(0, 0.02) for _ in range(3)] for _ in range(3)], device=device)
-    value = torch.einsum("ij,jhw->ihw", matrix, value).clamp(0, 1)
-    encoded = srgb_encode(value).pow(rng.uniform(0.85, 1.15))
-    black = rng.uniform(0.0, 0.03)
-    white = rng.uniform(0.9, 1.05)
-    encoded = ((encoded - black) / (white - black)).clamp(0, 1)
-    if rng.random() < 0.45:
-        encoded = _gaussian_blur(encoded, rng.uniform(0.4, 1.2))
+def emulate_accumulation(
+    frames: torch.Tensor,
+    max_frames: int,
+    rng: random.Random,
+    motion: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mirrors src/temporal.ts on [K, 3, h, w] linear frames (oldest first).
 
-    # 8-bit video, often with block compression.
-    encoded = torch.round(encoded * 255) / 255
-    if rng.random() < 0.6:
-        encoded = jpeg_like(encoded, rng.randint(55, 92))
-
-    # Runtime: inverse sRGB, then area downsampling in linear light.
-    runtime = inverse_srgb(encoded)
-    target_linear = libraw_decode(long_encoded)
-    if downsample > 1:
-        runtime = F.avg_pool2d(runtime[None], downsample)[0]
-        target_linear = F.avg_pool2d(target_linear[None], downsample)[0]
-    return runtime.contiguous(), libraw_encode(target_linear).contiguous()
+    The runtime averages each packed 2x2 cell over up to ``max_frames`` frames
+    and restarts a cell where it detects motion. ``motion`` restarts random
+    regions at random times so the model sees spatially varying noise.
+    Returns (accumulated [3, h, w], per-cell frame count [h/2, w/2]).
+    """
+    count_shape = (frames.shape[-2] // 2, frames.shape[-1] // 2)
+    history = frames[0].clone()
+    count = torch.ones(count_shape, device=frames.device)
+    resets = []
+    if motion and frames.shape[0] > 1:
+        for _ in range(rng.randint(1, 3)):
+            mask = torch.zeros(count_shape, dtype=torch.bool, device=frames.device)
+            h = rng.randint(count_shape[0] // 8, count_shape[0] // 2)
+            w = rng.randint(count_shape[1] // 8, count_shape[1] // 2)
+            y = rng.randrange(0, count_shape[0] - h + 1)
+            x = rng.randrange(0, count_shape[1] - w + 1)
+            mask[y:y + h, x:x + w] = True
+            resets.append((rng.randrange(1, frames.shape[0]), mask))
+    for step in range(1, frames.shape[0]):
+        count = (count + 1).clamp_max(max_frames)
+        for time, mask in resets:
+            if time == step:
+                count = torch.where(mask, torch.ones_like(count), count)
+        weight = F.interpolate(count[None, None], scale_factor=2, mode="nearest")[0]
+        history = history + (frames[step] - history) / weight
+    return history, count
 
 
 class PhoneSimDataset(Dataset[dict[str, torch.Tensor]]):
@@ -248,3 +353,119 @@ def degrade_batch(
     inputs_batch = torch.stack(inputs)
     gains = runtime_auto_gain(inputs_batch) * torch.tensor(jitter, device=device)
     return inputs_batch, torch.stack(targets), gains.clamp(1.0, MAX_GAIN)
+
+
+def _uint16_bits(array: np.ndarray) -> torch.Tensor:
+    """uint16 HWC -> CHW tensor of the same bits; torch lacks full uint16 support."""
+    return torch.from_numpy(np.ascontiguousarray(array).view(np.int16)).permute(2, 0, 1)
+
+
+def _from_uint16_bits(value: torch.Tensor) -> torch.Tensor:
+    return (value.to(torch.int32) & 0xFFFF).to(torch.float32) / 65535.0
+
+
+ACCUMULATION_CAPS = (1, 2, 4, 8, 16)
+SEQUENCE_LENGTHS = (1, 2, 3, 4, 6, 8)
+
+
+class BurstDataset(Dataset[dict[str, torch.Tensor]]):
+    """Aligned SID bursts (see build_burst_dataset). Collate with ``collate_list``.
+
+    Training draws the runtime downsampling, crop, frame subset and order;
+    evaluation is deterministic: ``eval_frames`` frames at ``eval_downsample``.
+    """
+
+    def __init__(self, root: str | Path, split: str, output_size: int = 256, augment: bool = True,
+                 eval_downsample: int = 2, eval_frames: int = 1, seed: int = 0) -> None:
+        self.files = sorted((Path(root) / "bursts" / split).glob("*.npz"))
+        self.files = [path for path in self.files if not path.name.endswith(".partial.npz")]
+        if not self.files:
+            raise ValueError(f"No cached {split} bursts under {root}")
+        self.output_size = output_size
+        self.augment = augment
+        self.eval_downsample = eval_downsample
+        self.eval_frames = eval_frames
+        self.seed = seed
+
+    def __len__(self) -> int:
+        return len(self.files)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        rng = random.Random() if self.augment else random.Random(self.seed * 1_000_003 + index)
+        with np.load(self.files[index]) as data:
+            available = sum(1 for key in data.files if key.startswith("short_"))
+            ratios_all = data["ratios"]
+            if self.augment:
+                length = min(available, rng.choice(SEQUENCE_LENGTHS))
+                chosen = rng.sample(range(available), length)
+                downsample = rng.choice((1, 2))
+            else:
+                chosen = list(range(min(available, self.eval_frames)))
+                downsample = self.eval_downsample
+            crop = self.output_size * downsample
+            size = data["long"].shape[0]
+            if crop > size:
+                raise ValueError(f"{self.output_size}px output at {downsample}x needs crops beyond {size}px")
+            if self.augment:
+                y = rng.randrange(0, size - crop + 1) // 2 * 2
+                x = rng.randrange(0, size - crop + 1) // 2 * 2
+            else:
+                y = x = (size - crop) // 2 // 2 * 2
+            window = (slice(y, y + crop), slice(x, x + crop))
+            long = _uint16_bits(data["long"][window])
+            shorts = torch.stack([_uint16_bits(data[f"short_{frame:02d}"][window]) for frame in chosen])
+            ratios = torch.from_numpy(ratios_all[chosen].astype(np.float32))
+        if self.augment:
+            if rng.random() < 0.5:
+                long, shorts = long.flip(-1), shorts.flip(-1)
+            if rng.random() < 0.5:
+                long, shorts = long.flip(-2), shorts.flip(-2)
+            if rng.random() < 0.5:
+                long, shorts = long.transpose(-1, -2), shorts.transpose(-1, -2)
+        return {
+            "long": long.contiguous(),
+            "shorts": shorts.contiguous(),
+            "ratios": ratios,
+            "downsample": torch.tensor(downsample),
+            "seed": torch.tensor(rng.getrandbits(62) if self.augment else self.seed * 1_000_003 + index),
+        }
+
+
+def collate_list(samples: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+    """Bursts differ in frame count and crop size, so batches stay lists."""
+    return samples
+
+
+def degrade_bursts(
+    samples: list[dict[str, torch.Tensor]],
+    device: torch.device,
+    augment: bool,
+    extra_noise: float | None = None,
+    accumulation_cap: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Simulated captures accumulated like the runtime.
+
+    Returns (accumulated linear RGB [B, 3, h, w], targets [B, 3, h, w], gains
+    [B], per-cell frame counts [B, h/2, w/2]). Evaluation uses a plain average
+    of all frames (``accumulation_cap`` defaults to the frame count) and fixed
+    ``extra_noise``.
+    """
+    inputs, targets, counts, currents, jitter = [], [], [], [], []
+    for sample in samples:
+        rng = random.Random(int(sample["seed"]))
+        shorts = _from_uint16_bits(sample["shorts"].to(device, non_blocking=True))
+        long = _from_uint16_bits(sample["long"].to(device, non_blocking=True))
+        frames, target = simulate_phone_burst(
+            shorts, sample["ratios"], long, rng, int(sample["downsample"]),
+            extra_noise=None if augment else (extra_noise or 0.0),
+        )
+        cap = rng.choice(ACCUMULATION_CAPS) if augment else (accumulation_cap or frames.shape[0])
+        accumulated, count = emulate_accumulation(frames, cap, rng, motion=augment and rng.random() < 0.5)
+        inputs.append(accumulated)
+        targets.append(target)
+        counts.append(count)
+        # The runtime measures gain on the current frame, before accumulation.
+        currents.append(frames[-1])
+        jitter.append(2 ** rng.uniform(-0.35, 0.35) if augment else 1.0)
+    gains = runtime_auto_gain(torch.stack(currents)) * torch.tensor(jitter, device=device)
+    return torch.stack(inputs), torch.stack(targets), gains.clamp(1.0, MAX_GAIN), torch.stack(counts)

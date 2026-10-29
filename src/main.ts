@@ -1,6 +1,7 @@
 import './styles.css';
 import { AutoGainController, sliderToGain } from './autoGain';
 import { CameraController, type CameraInfo } from './camera';
+import { downloadBlob, FrameCapture } from './capture';
 import { AdaptiveResolution, modelGeometry, orientResolution, resolutionByLabel } from './geometry';
 import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
@@ -14,6 +15,8 @@ const camera = new CameraController(ui.video);
 const profiler = new Profiler();
 const autoGain = new AutoGainController();
 const adaptiveResolution = new AdaptiveResolution();
+const capture = new FrameCapture();
+const CAPTURE_FRAMES = 16;
 
 let metadata: ModelMetadata | null = null;
 let pipeline: SIDPipeline | null = null;
@@ -219,7 +222,24 @@ async function initializePipeline(): Promise<void> {
   setStatus(ui, metadata.validation.verified ? `${label}${speed} · WebGPU ready` : `${label}${speed} · model unverified`, metadata.validation.verified ? 'ok' : 'normal');
 }
 
+/** Feeds every camera frame, processed or skipped, to an active capture. */
+function captureFrame(now: number): void {
+  if (!capture.active) return;
+  capture.grab(ui.video, now).then((archive) => {
+    if (!archive) return;
+    downloadBlob(archive, `sid-live-capture-${new Date().toISOString().replace(/[:.]/g, '-')}.tar`);
+    ui.capture.disabled = false;
+    ui.capture.textContent = 'Capture frames';
+    setStatus(ui, `Saved ${CAPTURE_FRAMES} camera frames`, 'ok');
+  }).catch((error: unknown) => {
+    ui.capture.disabled = false;
+    ui.capture.textContent = 'Capture frames';
+    setStatus(ui, `Capture failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
+  });
+}
+
 async function processFrame(now: number): Promise<void> {
+  captureFrame(now);
   profiler.frameReceived(now);
   if (!pipeline || selectedValues(ui).view === 'original') {
     updateDebug(now, selectedValues(ui).adapter);
@@ -290,6 +310,7 @@ async function start(): Promise<void> {
       setStatus(ui, compatibleMessage, 'error');
     }
     camera.pump(processFrame, () => {
+      captureFrame(performance.now());
       profiler.frameReceived(performance.now());
       profiler.frameSkipped();
     });
@@ -308,6 +329,23 @@ ui.view.addEventListener('change', () => {
 ui.adapter.addEventListener('change', () => pipeline?.resetTemporal());
 ui.resolution.addEventListener('change', () => setGeometry(selectedValues(ui).resolution));
 ui.temporal.addEventListener('change', () => pipeline?.resetTemporal());
+ui.capture.addEventListener('click', () => {
+  if (capture.active || !ui.video.videoWidth) return;
+  ui.capture.disabled = true;
+  ui.capture.textContent = 'Capturing…';
+  capture.start(CAPTURE_FRAMES, {
+    camera: cameraInfo,
+    trackSettings: ui.video.srcObject instanceof MediaStream
+      ? ui.video.srcObject.getVideoTracks()[0]?.getSettings() ?? null
+      : null,
+    model: activeModel,
+    gain: currentGain,
+    autoGain: ui.autoGain.checked,
+    processing: geometry,
+    temporal: selectedValues(ui).temporal,
+    inputStats: inputStats ?? null,
+  });
+});
 ui.debug.addEventListener('change', () => { ui.debugOverlay.hidden = !ui.debug.checked; });
 ui.autoGain.addEventListener('change', () => {
   if (!ui.autoGain.checked) currentGain = manualGain;

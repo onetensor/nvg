@@ -24,6 +24,7 @@ export interface Controls {
   temporal: HTMLSelectElement;
   debug: HTMLInputElement;
   debugOverlay: HTMLElement;
+  capture: HTMLButtonElement;
   autoGain: HTMLInputElement;
   gain: HTMLInputElement;
   gainValue: HTMLOutputElement;
@@ -51,6 +52,7 @@ export function controls(): Controls {
     temporal: required('#temporal'),
     debug: required('#debug'),
     debugOverlay: required('#debug-overlay'),
+    capture: required('#capture'),
     autoGain: required('#auto-gain'),
     gain: required('#gain'),
     gainValue: required('#gain-value'),

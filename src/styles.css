@@ -50,6 +50,8 @@ button, select { -webkit-tap-highlight-color: transparent; }
 .control-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 9px; }
 .control-grid label:not(.debug-check) { display: flex; flex-direction: column; gap: 5px; color: #939d96; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 select { width: 100%; min-height: 34px; border: 1px solid rgba(255,255,255,.1); border-radius: 9px; color: #f3f6f4; background: #171b19; padding: 0 8px; font-size: 12px; text-transform: none; letter-spacing: normal; }
+.capture-button { align-self: end; min-height: 34px; border: 1px solid rgba(255,255,255,.16); border-radius: 9px; color: #dce1dd; background: #171b19; font-size: 11px; cursor: pointer; }
+.capture-button:disabled { opacity: .5; cursor: wait; }
 .debug-check { display: flex; align-items: center; gap: 7px; align-self: end; min-height: 34px; color: #bec5c0; font-size: 11px; }
 input[type="checkbox"] { accent-color: var(--accent); }
 .gain-control { margin-top: 13px; }

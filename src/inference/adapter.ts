@@ -19,12 +19,13 @@ export class PseudoRawGain {
     this.params = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
-  /** Amplifies and clips the first `count` floats of `input` into a reused buffer. */
-  apply(input: GPUBuffer, gain: number, count: number): GPUBuffer {
-    this.ensureOutput(count * 4);
+  /** Amplifies and clips the first `count` floats of `input`, copying the rest up to `total`. */
+  apply(input: GPUBuffer, gain: number, count: number, total = count): GPUBuffer {
+    this.ensureOutput(total * 4);
     const values = new ArrayBuffer(16);
     new DataView(values).setUint32(0, count, true);
     new DataView(values).setFloat32(4, gain, true);
+    new DataView(values).setUint32(8, total, true);
     this.device.queue.writeBuffer(this.params, 0, values);
     if (!this.bindGroup || this.source !== input) {
       this.source = input;
@@ -41,7 +42,7 @@ export class PseudoRawGain {
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
-    pass.dispatchWorkgroups(Math.ceil(count / 256));
+    pass.dispatchWorkgroups(Math.ceil(total / 256));
     pass.end();
     this.device.queue.submit([encoder.finish()]);
     return this.output!;
