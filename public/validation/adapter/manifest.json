@@ -1,0 +1,24 @@
+{
+  "name": "Adapter",
+  "inputUrl": "./validation/adapter/input.f32",
+  "outputUrl": "./validation/adapter/output.f32",
+  "inputShape": [
+    1,
+    3,
+    128,
+    128
+  ],
+  "outputShape": [
+    1,
+    4,
+    64,
+    64
+  ],
+  "stages": [
+    {
+      "modelUrl": "../../models/pseudo-raw-adapter.onnx",
+      "inputName": "input",
+      "outputName": "pseudo_raw"
+    }
+  ]
+}

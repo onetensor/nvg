@@ -1,0 +1,24 @@
+{
+  "name": "SID",
+  "inputUrl": "./validation/sid/input.f32",
+  "outputUrl": "./validation/sid/output.f32",
+  "inputShape": [
+    1,
+    4,
+    256,
+    256
+  ],
+  "outputShape": [
+    1,
+    3,
+    512,
+    512
+  ],
+  "stages": [
+    {
+      "modelUrl": "../../models/sid-sony.onnx",
+      "inputName": "input",
+      "outputName": "output"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SID WebGPU Capture Benchmark</title>
+    <style>
+      body { margin: 0; padding: 32px; color: #e9eee9; background: #080a09; font: 15px/1.5 ui-monospace, monospace; }
+      main { max-width: 760px; margin: auto; }
+      button { border: 0; border-radius: 999px; padding: 12px 18px; color: #10150d; background: #b6ff4c; font-weight: 700; }
+      pre { overflow: auto; padding: 18px; border: 1px solid #293329; border-radius: 12px; background: #101310; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Static WebGPU graph-capture benchmark</h1>
+      <p>Runs the packaged fixed 640×384 adapter and joint SID with stable, preallocated GPU buffers.</p>
+      <button id="run" type="button">Run benchmark</button>
+      <pre id="result">Waiting.</pre>
+    </main>
+    <script type="module" src="/src/browserBenchmark.ts"></script>
+  </body>
+</html>
