@@ -114,6 +114,7 @@ export interface DebugSnapshot {
   modelVariant: ModelVariant;
   gain: number;
   automaticGain: number;
+  inputStats?: LuminanceStats;
   outputStats?: OutputStats;
   framesReceived: number;
   framesProcessed: number;

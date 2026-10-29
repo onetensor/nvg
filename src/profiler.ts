@@ -90,6 +90,12 @@ export function formatDebug(snapshot: DebugSnapshot): string {
     `SID model    ${snapshot.modelVariant}`,
     `adapter      ${snapshot.adapterMode}`,
     `SID gain     ${fixed(snapshot.gain)}×${snapshot.automaticGain ? ' (auto)' : ''}`,
+    ...(snapshot.inputStats ? [
+      `input        ${fixed(snapshot.inputStats.mean, 4)} mean`,
+      `             ${fixed(snapshot.inputStats.p50, 4)} p50`,
+      `             ${fixed(snapshot.inputStats.p90, 4)} p90`,
+      `black        ${fixed(snapshot.inputStats.blackFraction * 100, 1)}%`,
+    ] : []),
     ...(snapshot.outputStats ? [
       `output       ${fixed(snapshot.outputStats.min, 3)} min`,
       `             ${fixed(snapshot.outputStats.mean, 3)} mean`,
