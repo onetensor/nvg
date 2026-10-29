@@ -8,30 +8,23 @@ const destination = resolve(root, 'public', 'models');
 const metadata = JSON.parse(await readFile(resolve(source, 'metadata.json'), 'utf8'));
 
 const selectedSid = metadata.sidJoint?.available ? metadata.sidJoint : metadata.sid;
-if (!selectedSid?.fixed360p?.available || !metadata.adapter?.fixed360p?.available) {
-  throw new Error('The production site requires fixed 360p joint SID and adapter graphs.');
+if (!selectedSid?.fp16?.available || !metadata.adapter?.fp16?.available) {
+  throw new Error('The production site requires dynamic FP16 joint SID and adapter graphs.');
 }
 
-function fixedOnly(asset) {
-  const fixed = asset.fixed360p;
-  if (!fixed.fp16?.available) throw new Error(`FP16 fixed graph is unavailable for ${asset.description}.`);
-  const fp16 = fixed.fp16;
+function fp16Only(asset) {
+  const fp16 = asset.fp16;
+  const { fixed360p: _fixed360p, ...dynamic } = asset;
   return {
-    ...asset,
+    ...dynamic,
     url: fp16.url,
     sha256: fp16.sha256,
     fp16,
-    fixed360p: {
-      ...fixed,
-      url: fp16.url,
-      sha256: fp16.sha256,
-      fp16,
-    },
   };
 }
 
-const deployedSid = fixedOnly(selectedSid);
-const deployedAdapter = fixedOnly(metadata.adapter);
+const deployedSid = fp16Only(selectedSid);
+const deployedAdapter = fp16Only(metadata.adapter);
 const deployedMetadata = {
   ...metadata,
   // Both keys deliberately resolve to the selected joint model. The original

@@ -6,7 +6,7 @@ import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
 import { isAppleMobileWebKit } from './platform';
 import { formatDebug, Profiler } from './profiler';
-import type { AdapterMode, ModelGeometry, ModelMetadata, ModelVariant, ResolutionChoice, TargetMode } from './types';
+import type { AdapterMode, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
 import { applyView, controls, selectedValues, setStatus } from './ui/controls';
 
 const ui = controls();
@@ -25,6 +25,7 @@ let lastDebugUpdate = 0;
 let frameErrors = 0;
 let activeModel: ModelVariant = 'joint';
 let metadataPromise: Promise<ModelMetadata> | null = null;
+let outputStats: PipelineResult['outputStats'];
 
 function modelUrl(url: string): string {
   if (url.startsWith('./')) return `${import.meta.env.BASE_URL}${url.slice(2)}`;
@@ -110,6 +111,7 @@ function updateDebug(now: number, mode: AdapterMode): void {
     adapterMode: mode,
     gain: currentGain,
     automaticGain: ui.autoGain.checked ? currentGain : 0,
+    ...(outputStats ? { outputStats } : {}),
   }));
 }
 
@@ -135,6 +137,7 @@ async function initializePipeline(): Promise<void> {
   }
   const selectedSid = activeModel === 'joint' ? metadata.sidJoint! : metadata.sid;
   const requested = selectedValues(ui);
+  geometry = selectedResolution(requested.resolution);
   const appleMobileWebKit = isAppleMobileWebKit();
   const useFixed360 = requested.resolution === '360p' &&
     selectedSid.fixed360p?.available === true &&
@@ -168,9 +171,14 @@ async function initializePipeline(): Promise<void> {
     useGraphCapture,
     useGraphCapture ? sidFixed?.outputShape : undefined,
     useGraphCapture ? adapterFixed?.outputShape : undefined,
+    appleMobileWebKit,
   );
   await pipeline.initialize((message) => setStatus(ui, message));
   ui.model.disabled = true;
+  if (appleMobileWebKit) {
+    ui.temporal.value = 'off';
+    ui.temporal.disabled = true;
+  }
   if (useFixed360) {
     ui.resolution.disabled = true;
     ui.adapter.disabled = true;
@@ -181,7 +189,7 @@ async function initializePipeline(): Promise<void> {
   const label = activeModel === 'joint' ? 'Joint-tuned SID' : 'Original SID';
   const speed = useGraphCapture
     ? ' · static graph capture'
-    : useFixed360 ? ' · static 360p · iPhone compatibility' : '';
+    : appleMobileWebKit ? ' · iPhone visible-canvas fallback' : '';
   setStatus(ui, metadata.validation.verified ? `${label}${speed} · WebGPU ready` : `${label}${speed} · model unverified`, metadata.validation.verified ? 'ok' : 'normal');
 }
 
@@ -194,6 +202,7 @@ async function processFrame(now: number): Promise<void> {
   const state = selectedValues(ui);
   try {
     const result = await pipeline.process(ui.video, geometry, state.adapter, currentGain, state.temporal);
+    if (result.outputStats) outputStats = result.outputStats;
     profiler.frameProcessed(result.timing);
     frameErrors = 0;
     if (result.stats && ui.autoGain.checked) {

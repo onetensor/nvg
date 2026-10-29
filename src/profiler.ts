@@ -90,6 +90,12 @@ export function formatDebug(snapshot: DebugSnapshot): string {
     `SID model    ${snapshot.modelVariant}`,
     `adapter      ${snapshot.adapterMode}`,
     `SID gain     ${fixed(snapshot.gain)}×${snapshot.automaticGain ? ' (auto)' : ''}`,
+    ...(snapshot.outputStats ? [
+      `output       ${fixed(snapshot.outputStats.min, 3)} min`,
+      `             ${fixed(snapshot.outputStats.mean, 3)} mean`,
+      `             ${fixed(snapshot.outputStats.max, 3)} max`,
+      `non-finite   ${snapshot.outputStats.nonFinite}`,
+    ] : []),
     '',
     `frames       ${snapshot.framesReceived} received`,
     `             ${snapshot.framesProcessed} processed`,

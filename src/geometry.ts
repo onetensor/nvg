@@ -1,6 +1,7 @@
 import type { ModelGeometry, Resolution } from './types';
 
 export const RESOLUTIONS: readonly Resolution[] = [
+  { label: '180p', width: 320, height: 180 },
   { label: '360p', width: 640, height: 360 },
   { label: '540p', width: 960, height: 540 },
   { label: '720p', width: 1280, height: 720 },
@@ -32,7 +33,7 @@ export function resolutionByLabel(label: Resolution['label']): Resolution {
 }
 
 export class AdaptiveResolution {
-  private index = 0;
+  private index = 1;
   private slowFrames = 0;
   private fastFrames = 0;
   private cooldown = 0;

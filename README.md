@@ -14,9 +14,9 @@ The repository deliberately distinguishes implemented code from validated artifa
 - GPU I/O binding: preprocessing, learned adapter, gain, SID, temporal filtering, and display share GPU storage buffers.
 - A tiny learned RGB → pseudo-RAW adapter (265,732 parameters at width 64), selected by validation ablation, followed by an optional low-learning-rate joint SID quality pass.
 - Logarithmic manual gain from 1× to 300× and a smoothed histogram-based automatic controller.
-- Geometry and training tooling for 360p through 1080p; the production iPhone site is intentionally locked to the fastest fixed 360p graph.
+- Geometry and training tooling from 180p through 1080p; the production iPhone site defaults to 320×180 to keep the full SID network usable on a phone.
 - Adaptive resolution, measured rolling timing/FPS, frame counters, split comparison, and motion-aware temporal stabilization.
-- A lossless fixed 640×384 performance path with static ONNX shapes, reusable GPU tensors, FP16 weights, and WebGPU graph capture where supported.
+- Dynamic FP16 joint SID and adapter graphs, reusable GPU tensors, and an iPhone Canvas2D presentation fallback for WebKit's unreliable WebGPU canvas compositor.
 - Exact TensorFlow-checkpoint conversion, TensorFlow/PyTorch/ONNX validation, adapter training/export/evaluation, and browser fixture tooling.
 
 ## Run locally
@@ -50,9 +50,9 @@ the repository. For `onetensor/nvg`, the deployed site is:
 
 The Vite build uses relative asset URLs, so the repository subpath works for
 the app, validation fixture, benchmark page, WASM bundle, and model files.
-The production sync deliberately publishes only the fixed 360p FP16 joint SID
+The production sync deliberately publishes only the dynamic FP16 joint SID
 and FP16 adapter. Those two files are preloaded in parallel and passed directly
-to ONNX Runtime; FP32, dynamic-shape, and original-SID graphs are not downloaded.
+to ONNX Runtime; FP32, static-shape, and original-SID graphs are not downloaded.
 GitHub Pages provides HTTPS (required for camera access), but not custom
 COOP/COEP headers; the deployed browser/device still needs to prove that the
 selected ONNX Runtime WebGPU build works without them.
@@ -222,14 +222,17 @@ No device numbers are fabricated. The debug overlay measures the live end-to-end
 |---|---|---|---:|---:|---:|---|
 | _not measured_ | — | — | — | — | — | — |
 
-The visible 640×360 frame is internally padded to 640×384 and cropped after SID, avoiding invalid U-Net skip shapes without distorting the displayed 16:9 region.
+The visible 320×180 frame is internally padded to 320×192 and cropped after SID, avoiding invalid U-Net skip shapes without distorting the displayed 16:9 region. A 640×360 quality option remains available through the same dynamic graph.
 
-For maximum throughput, production is fixed at 360p. Its fixed-shape graph uses stable
-preallocated GPU buffers and graph capture; model, adapter, and resolution are
-locked after startup so captured bindings remain valid. On iPhone WebKit,
+Production defaults to 320×180, internally padded to 320×192. The prior
+640×384 path costs about 27.7 GMAC per frame across adapter + SID; the new
+default costs about 6.9 GMAC, almost exactly one quarter. On iPhone WebKit,
 graph capture and preallocated ONNX outputs are disabled because those advanced
 I/O bindings are not reliably implemented there. The established JSEP WebGPU
-path is used instead of ONNX Runtime's newer native WebGPU path. Histogram readback runs once
+path is used instead of ONNX Runtime's newer native WebGPU path. Enhanced frames
+are downloaded only at the final presentation boundary and drawn through
+Canvas2D to avoid the iOS WebGPU canvas invisibility/flicker bug; inference
+remains WebGPU. Histogram readback runs once
 per 30 processed frames, temporal filtering defaults Off, and the frame pump
 keeps at most one inference in flight so overload drops frames instead of
 building latency.
