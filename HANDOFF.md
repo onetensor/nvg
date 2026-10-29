@@ -270,6 +270,49 @@ great in some low light circumstances, very difficult to make out anything";
   Bursts were on the pod's container disk; rebuild with
   `training/build_burst_dataset.py` (~5 minutes with 13 processes).
 
+## Slim 360p model, handheld alignment, object outlines
+
+User feedback on `7d1c2ac`: "actually very good"; ~25 FPS at 180p is great.
+Asked to push quality further if possible, otherwise distil to a slimmer model
+for higher resolution at the same FPS; then asked for object outlines.
+
+- **Alignment (deployed, `1d56e15`).** `shaders/align.wgsl` estimates a global
+  translation between the incoming frame and the temporal history entirely on
+  the GPU (per-cell sqrt-luma maps, coarse ±4 search on 4×4-cell averages,
+  fine ±2 refinement, ties prefer zero) and `shaders/temporal.wgsl` reads the
+  history at that shift with ping-pong buffers; cells entering the frame
+  restart. GPU test: exact shifts up to ±16 cells under 100% noise at 180p and
+  360p sizes. A shaky dark fake-camera feed keeps sharp edges at 8 frames.
+  `?align=0` disables it.
+- **Slim students.** WebGPU timing (local iGPU, random weights): w32 mono at
+  180p 18–19 ms; at 360p w16 23 ms, w12 20 ms, w8 14 ms. `prune_width`
+  (structured, filter-L1, consistent through skip concatenations) warm-starts
+  students from mono13; `train_direct --teacher` distils. `evaluate_resolution`
+  scores a 180p model upscaled 2× against 360p models at 360p: at 10k of 40k
+  steps w12@360p already beat w32@180p (f8 very dark: 21.60 dB / LPIPS 0.399
+  vs 21.37 / 0.467); w32@360p (too slow) shows resolution alone is worth
+  ~1.4 dB and ~0.16 LPIPS.
+- **Variants.** `metadata.directVariants` holds named direct models
+  (`?model=<name>`) with an optional `defaultResolution`; production stays
+  `sidDirect`. The sync script ships every variant; a load downloads one.
+- **Outlines.** `training/build_edge_targets.py` runs HED (soft, controlnet_aux
+  `lllyasviel/Annotators`) on each cached clean crop brightened to median 0.18
+  (HED misses edges in dim renderings; PiDiNet missed object silhouettes).
+  `add_outline_head` adds a second output plane (outline logits) to a mono
+  model with the image plane unchanged; `--outline-weight` trains it with
+  class-balanced BCE (HED-style). `evaluate_outlines` reports best-threshold
+  F-scores: Sobel on the noisy input 0.18, Sobel on the denoised output 0.39
+  (the bar the learned head must beat). Runtime: an `Outlines` control (off /
+  learned / classic Sobel on the output) in both display shaders; learned is
+  disabled unless `outputChannels` is 2.
+- **RunPod.** Pod `ovw2rxpgw4cg4r` (RTX PRO 6000) with volume `15zybm4owd`.
+  Detached shell watchdogs stopped surviving in this environment, so the cost
+  cap is a systemd user timer: `systemctl --user list-timers nvg-pod-cap.timer`
+  (deletes the pod at 19:30 EDT 2026-10-29). Runs: `mono-w12`, `mono-w8`
+  (40k steps, lr 2e-4, teacher mono13 weight 0.5, LPIPS 0.1), then
+  `mono-w12-outline` (15k steps, outline weight 0.3), all under
+  `/workspace/nvg-direct-run/`.
+
 ## What the user wants
 
 The user wants the best practical low-light enhancement possible in an iPhone

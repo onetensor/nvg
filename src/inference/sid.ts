@@ -4,7 +4,9 @@ import { PseudoRawGain } from './adapter';
 import { GPUPreprocessor } from '../preprocessing/gpuPreprocess';
 import { TemporalAccumulator } from '../temporal';
 import { Canvas2DRenderer, WebGPURenderer } from '../renderer';
-import type { AdapterMode, DisplayOptions, ModelGeometry, ModelMetadata, MonoTint, PipelineResult, TemporalLevel } from '../types';
+import type {
+  AdapterMode, DisplayOptions, ModelGeometry, ModelMetadata, MonoTint, OutlineMode, PipelineResult, TemporalLevel,
+} from '../types';
 
 export class SIDPipeline {
   private readonly sid: ONNXWebGPUBackend;
@@ -46,9 +48,10 @@ export class SIDPipeline {
   get learnedAdapterAvailable(): boolean { return this.adapter !== null; }
   /** How a luminance-only model is shown. */
   tint: MonoTint = 'green';
-  /** 1 for luminance-only direct models, otherwise 3. */
-  get outputChannels(): 1 | 3 {
-    return (this.metadata.sid as { outputChannels?: 1 | 3 }).outputChannels ?? 3;
+  outline: OutlineMode = 'off';
+  /** 1 for luminance-only direct models, 2 with an outline plane, otherwise 3. */
+  get outputChannels(): 1 | 2 | 3 {
+    return (this.metadata.sid as { outputChannels?: 1 | 2 | 3 }).outputChannels ?? 3;
   }
   /** 12 (packed RGB) or 13 (plus noise level) for direct models. */
   private get directChannels(): number {
@@ -123,7 +126,9 @@ export class SIDPipeline {
       }
 
       const postStart = performance.now();
-      const display: DisplayOptions = { channels: this.outputChannels, tint: this.tint };
+      // Learned outlines need the model's outline plane.
+      const outline = this.outline === 'learned' && this.outputChannels !== 2 ? 'off' : this.outline;
+      const display: DisplayOptions = { channels: this.outputChannels, tint: this.tint, outline };
       let outputStats;
       if (this.cpuDisplay) {
         // Pack and map the smaller RGBA8 image asynchronously. Inference does

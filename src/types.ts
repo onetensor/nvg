@@ -7,11 +7,15 @@ export type TemporalLevel = 'off' | 'low' | 'medium' | 'high' | 'hold';
 export type TargetMode = '30' | '15' | 'quality';
 export type CameraInputPath = 'external-texture' | 'video-copy' | 'video-frame-copy' | 'canvas-copy';
 
-/** How model output is shown: 3 = RGB; 1 = luminance through a tint. */
+/** How model output is shown: 3 = RGB; 1 = luminance through a tint; 2 = luminance plus outline logits. */
 export interface DisplayOptions {
-  channels: 1 | 3;
+  channels: 1 | 2 | 3;
   tint: MonoTint;
+  outline: OutlineMode;
 }
+
+/** Object outlines: the model's learned plane, or Sobel on its output. */
+export type OutlineMode = 'off' | 'learned' | 'classic';
 
 export type MonoTint = 'gray' | 'green';
 
@@ -79,7 +83,7 @@ export interface ModelAsset {
 export interface DirectModelAsset extends ModelAsset {
   inputChannels: number;
   width: number;
-  outputChannels?: 1 | 3;
+  outputChannels?: 1 | 2 | 3;
   /** Resolution the model is sized for; applied at start-up. */
   defaultResolution?: Exclude<ResolutionChoice, 'auto'>;
   name?: string;
