@@ -2,7 +2,9 @@ import './styles.css';
 import { AutoGainController, sliderToGain } from './autoGain';
 import { CameraController, type CameraInfo } from './camera';
 import { AdaptiveResolution, modelGeometry, resolutionByLabel } from './geometry';
+import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
+import { isAppleMobileWebKit } from './platform';
 import { formatDebug, Profiler } from './profiler';
 import type { AdapterMode, ModelGeometry, ModelMetadata, ModelVariant, ResolutionChoice, TargetMode } from './types';
 import { applyView, controls, selectedValues, setStatus } from './ui/controls';
@@ -22,6 +24,7 @@ let currentGain = manualGain;
 let lastDebugUpdate = 0;
 let frameErrors = 0;
 let activeModel: ModelVariant = 'joint';
+let metadataPromise: Promise<ModelMetadata> | null = null;
 
 function modelUrl(url: string): string {
   if (url.startsWith('./')) return `${import.meta.env.BASE_URL}${url.slice(2)}`;
@@ -48,6 +51,20 @@ async function loadMetadata(): Promise<ModelMetadata> {
   if (value.sidJoint) resolveFixedAsset(value.sidJoint);
   resolveFixedAsset(value.adapter);
   return value;
+}
+
+function selectedMetadata(): Promise<ModelMetadata> {
+  metadataPromise ??= loadMetadata();
+  return metadataPromise;
+}
+
+async function preloadSelectedModels(): Promise<boolean> {
+  const gpuAdapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+  if (!gpuAdapter?.features.has('shader-f16')) return false;
+  const value = await selectedMetadata();
+  const selectedSid = value.sidJoint?.available ? value.sidJoint : value.sid;
+  await Promise.all([preloadModel(selectedSid.url), preloadModel(value.adapter.url)]);
+  return true;
 }
 
 function updateRequirements(): void {
@@ -97,7 +114,7 @@ function updateDebug(now: number, mode: AdapterMode): void {
 }
 
 async function initializePipeline(): Promise<void> {
-  metadata = await loadMetadata();
+  metadata = await selectedMetadata();
   if (!metadata.sid.available) {
     ui.view.value = 'original';
     applyView(ui, 'original');
@@ -112,15 +129,20 @@ async function initializePipeline(): Promise<void> {
     ui.model.value = 'original';
   }
   const gpuAdapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+  if (!gpuAdapter) throw new Error('WebGPU could not acquire a GPU adapter on this device.');
+  if (!gpuAdapter.features.has('shader-f16')) {
+    throw new Error('This optimized build requires WebGPU shader-f16; FP32 is intentionally not downloaded.');
+  }
   const selectedSid = activeModel === 'joint' ? metadata.sidJoint! : metadata.sid;
   const requested = selectedValues(ui);
+  const appleMobileWebKit = isAppleMobileWebKit();
   const useFixed360 = requested.resolution === '360p' &&
     selectedSid.fixed360p?.available === true &&
     metadata.adapter.fixed360p?.available === true;
   const sidFixed = useFixed360 ? selectedSid.fixed360p! : undefined;
   const adapterFixed = useFixed360 ? metadata.adapter.fixed360p! : undefined;
   const runtimeMetadata: ModelMetadata = {
-    ...metadata,
+    schemaVersion: metadata.schemaVersion,
     sid: {
       ...selectedSid,
       ...(sidFixed ? { url: sidFixed.url, sha256: sidFixed.sha256 } : {}),
@@ -131,20 +153,23 @@ async function initializePipeline(): Promise<void> {
       ...(adapterFixed ? { url: adapterFixed.url, sha256: adapterFixed.sha256 } : {}),
       fp16: adapterFixed?.fp16 ? { ...adapterFixed.fp16 } : metadata.adapter.fp16 ? { ...metadata.adapter.fp16 } : undefined,
     },
+    preprocessing: metadata.preprocessing,
+    validation: metadata.validation,
   };
-  if (gpuAdapter?.features.has('shader-f16')) {
-    if (runtimeMetadata.sid.fp16?.available) runtimeMetadata.sid.url = runtimeMetadata.sid.fp16.url;
-    if (runtimeMetadata.adapter.fp16?.available) runtimeMetadata.adapter.url = runtimeMetadata.adapter.fp16.url;
-  }
-  setStatus(ui, `Loading ${activeModel === 'joint' ? 'joint-tuned' : 'original'} SID model…`);
+  if (runtimeMetadata.sid.fp16?.available) runtimeMetadata.sid.url = runtimeMetadata.sid.fp16.url;
+  if (runtimeMetadata.adapter.fp16?.available) runtimeMetadata.adapter.url = runtimeMetadata.adapter.fp16.url;
+  const useGraphCapture = useFixed360 && !appleMobileWebKit;
+  setStatus(ui, appleMobileWebKit
+    ? 'iPhone compatibility mode · loading selected joint model…'
+    : `Loading ${activeModel === 'joint' ? 'joint-tuned' : 'original'} SID model…`);
   pipeline = new SIDPipeline(
     runtimeMetadata,
     ui.canvas,
-    useFixed360,
-    sidFixed?.outputShape,
-    adapterFixed?.outputShape,
+    useGraphCapture,
+    useGraphCapture ? sidFixed?.outputShape : undefined,
+    useGraphCapture ? adapterFixed?.outputShape : undefined,
   );
-  await pipeline.initialize();
+  await pipeline.initialize((message) => setStatus(ui, message));
   ui.model.disabled = true;
   if (useFixed360) {
     ui.resolution.disabled = true;
@@ -154,7 +179,9 @@ async function initializePipeline(): Promise<void> {
   if (learnedOption) learnedOption.disabled = !pipeline.learnedAdapterAvailable;
   if (!pipeline.learnedAdapterAvailable && ui.adapter.value === 'learned') ui.adapter.value = 'manual';
   const label = activeModel === 'joint' ? 'Joint-tuned SID' : 'Original SID';
-  const speed = useFixed360 ? ' · static graph capture' : '';
+  const speed = useGraphCapture
+    ? ' · static graph capture'
+    : useFixed360 ? ' · static 360p · iPhone compatibility' : '';
   setStatus(ui, metadata.validation.verified ? `${label}${speed} · WebGPU ready` : `${label}${speed} · model unverified`, metadata.validation.verified ? 'ok' : 'normal');
 }
 
@@ -203,8 +230,14 @@ async function start(): Promise<void> {
     try {
       await initializePipeline();
     } catch (error) {
+      console.error(error);
       const message = error instanceof Error ? error.message : String(error);
-      setStatus(ui, message, 'error');
+      const compatibleMessage = /GPUBufferBinding\.buffer|instance of GPUBuffer/i.test(message)
+        ? 'Safari rejected an ONNX WebGPU buffer. Original camera remains available; reload after updating iOS.'
+        : message;
+      ui.view.value = 'original';
+      applyView(ui, 'original');
+      setStatus(ui, compatibleMessage, 'error');
     }
     camera.pump(processFrame, () => {
       profiler.frameReceived(performance.now());
@@ -262,3 +295,8 @@ window.addEventListener('pagehide', () => {
 applyView(ui, selectedValues(ui).view);
 updateRequirements();
 updateGainUi();
+void preloadSelectedModels().then((cached) => {
+  ui.requirements.textContent = `${ui.requirements.textContent} · ${cached ? 'selected FP16 model cached' : 'shader-f16 unavailable'}`;
+}).catch((error) => {
+  console.warn('Selected model preload failed; initialization will retry it.', error);
+});

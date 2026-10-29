@@ -1,4 +1,4 @@
-import type * as ort from 'onnxruntime-web/webgpu';
+import type * as ort from 'onnxruntime-web';
 import type { ModelAsset } from '../types';
 
 export type InferenceTensor = ort.Tensor;
