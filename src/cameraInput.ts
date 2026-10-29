@@ -140,8 +140,10 @@ export function orientationVerdict(estimate: OrientationEstimate): OrientationVe
   if (estimate.missing > 0.1) {
     return { kind: 'reject', reason: `${Math.round(estimate.missing * 100)}% of the camera frame is missing` };
   }
-  // A flat or symmetric scene cannot distinguish orientations; try a later frame.
-  if (estimate.contrast < 0.025) return { kind: 'inconclusive' };
+  // Only a (near-)blank frame cannot distinguish orientations. Both grids come
+  // from the same frame, so even the noise of a dark room is a usable
+  // fingerprint; correlation and margin below guard against false matches.
+  if (estimate.contrast < 0.003) return { kind: 'inconclusive' };
   if (estimate.correlation < 0.3) {
     return { kind: 'reject', reason: `copied frame does not match the camera (r=${estimate.correlation.toFixed(2)})` };
   }

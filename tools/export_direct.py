@@ -18,13 +18,13 @@ def main() -> None:
     parser.add_argument("--opset", type=int, default=18)
     args = parser.parse_args()
     model = load_sid(args.checkpoint).eval()
-    if model.in_channels != 12:
-        raise ValueError("Expected a direct 12-channel checkpoint")
+    if model.in_channels not in (12, 13):
+        raise ValueError("Expected a direct (12- or 13-channel) checkpoint")
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.onnx.export(
         model,
-        torch.rand(1, 12, 64, 64),
+        torch.rand(1, model.in_channels, 64, 64),
         output,
         input_names=["input"],
         output_names=["output"],
@@ -38,7 +38,7 @@ def main() -> None:
     )
 
     # The runtime's portrait 180p shape, so equivalence covers a non-square input.
-    sample = torch.rand(1, 12, 160, 96) * 0.6
+    sample = torch.rand(1, model.in_channels, 160, 96) * 0.6
     with torch.inference_mode():
         expected = model(sample).numpy()
     session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
@@ -47,6 +47,8 @@ def main() -> None:
         "onnx": str(output),
         "bytes": output.stat().st_size,
         "width": model.width,
+        "in_channels": model.in_channels,
+        "out_channels": model.out_channels,
         "parameters": sum(parameter.numel() for parameter in model.parameters()),
         "output_shape": list(actual.shape),
         "max_abs_error": float(np.abs(actual - expected).max()),

@@ -46,6 +46,11 @@ function canvasPng(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
+export interface CaptureFile {
+  name: string;
+  data: Blob;
+}
+
 export class FrameCapture {
   private canvases: HTMLCanvasElement[] = [];
   private timestamps: number[] = [];
@@ -63,8 +68,8 @@ export class FrameCapture {
     this.details = details;
   }
 
-  /** Call once per camera frame; resolves to the archive after the last frame. */
-  async grab(video: HTMLVideoElement, now: number): Promise<Blob | null> {
+  /** Call once per camera frame; resolves to the capture's files after the last frame. */
+  async grab(video: HTMLVideoElement, now: number): Promise<CaptureFile[] | null> {
     if (!this.active || !video.videoWidth) return null;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
@@ -77,7 +82,7 @@ export class FrameCapture {
     this.remaining -= 1;
     if (this.remaining > 0) return null;
 
-    const files: { name: string; data: Blob }[] = [];
+    const files: CaptureFile[] = [];
     for (const [index, frame] of this.canvases.entries()) {
       files.push({ name: `frame-${String(index).padStart(2, '0')}.png`, data: await canvasPng(frame) });
     }
@@ -92,11 +97,98 @@ export class FrameCapture {
     };
     files.push({ name: 'metadata.json', data: new Blob([JSON.stringify(metadata, null, 2)]) });
     this.canvases = [];
-    return tarBlob(files);
+    return files;
   }
 }
 
-export function downloadBlob(blob: Blob, name: string): void {
+const DATABASE = 'sid-live-captures';
+const STORE = 'captures';
+
+/**
+ * Keeps captures on the device until they are exported together. IndexedDB
+ * survives the reloads iOS forces on background tabs; if it is unavailable
+ * (for example in private browsing) captures stay in memory for the session.
+ */
+export class CaptureStore {
+  private readonly memory: CaptureFile[][] = [];
+  private database: Promise<IDBDatabase | null> | null = null;
+
+  private open(): Promise<IDBDatabase | null> {
+    this.database ??= new Promise((resolve) => {
+      try {
+        const request = indexedDB.open(DATABASE, 1);
+        request.onupgradeneeded = () => request.result.createObjectStore(STORE, { autoIncrement: true });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+    return this.database;
+  }
+
+  private async transaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
+    const database = await this.open();
+    if (!database) return null;
+    return new Promise((resolve, reject) => {
+      const request = run(database.transaction(STORE, mode).objectStore(STORE));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed.'));
+    });
+  }
+
+  async add(files: CaptureFile[]): Promise<void> {
+    try {
+      if (await this.transaction('readwrite', (store) => store.add(files)) !== null) return;
+    } catch (error) {
+      console.warn('Could not persist the capture; keeping it in memory.', error);
+    }
+    this.memory.push(files);
+  }
+
+  async all(): Promise<CaptureFile[][]> {
+    let stored: CaptureFile[][] = [];
+    try {
+      stored = (await this.transaction('readonly', (store) => store.getAll() as IDBRequest<CaptureFile[][]>)) ?? [];
+    } catch (error) {
+      console.warn('Could not read stored captures.', error);
+    }
+    return [...stored, ...this.memory];
+  }
+
+  async count(): Promise<number> {
+    let stored = 0;
+    try {
+      stored = (await this.transaction('readonly', (store) => store.count())) ?? 0;
+    } catch {
+      stored = 0;
+    }
+    return stored + this.memory.length;
+  }
+
+  async clear(): Promise<void> {
+    this.memory.length = 0;
+    try {
+      await this.transaction('readwrite', (store) => store.clear());
+    } catch (error) {
+      console.warn('Could not clear stored captures.', error);
+    }
+  }
+}
+
+/** One archive holding every capture in its own folder. */
+export function captureArchive(captures: CaptureFile[][]): Promise<Blob> {
+  return tarBlob(captures.flatMap((files, index) =>
+    files.map((file) => ({ name: `capture-${String(index + 1).padStart(2, '0')}/${file.name}`, data: file.data }))));
+}
+
+/** Opens the share sheet (AirDrop, Files, …) when available, else downloads. */
+export async function shareOrDownload(blob: Blob, name: string): Promise<void> {
+  const file = new File([blob], name, { type: 'application/x-tar' });
+  if (navigator.canShare?.({ files: [file] })) {
+    await navigator.share({ files: [file], title: name });
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

@@ -1,6 +1,8 @@
 import postprocessShader from '../shaders/postprocess.wgsl?raw';
 import readbackShader from '../shaders/readback.wgsl?raw';
-import type { ModelGeometry, OutputStats, PresentationStats } from './types';
+import type { DisplayOptions, ModelGeometry, OutputStats, PresentationStats } from './types';
+
+const RGB_DISPLAY: DisplayOptions = { channels: 3, tint: 'gray' };
 
 class RollingAverage {
   private readonly values: number[] = [];
@@ -83,7 +85,7 @@ export class Canvas2DRenderer {
     }));
   }
 
-  render(image: GPUBuffer, geometry: ModelGeometry): OutputStats | undefined {
+  render(image: GPUBuffer, geometry: ModelGeometry, display: DisplayOptions = RGB_DISPLAY): OutputStats | undefined {
     if (this.canvas.width !== geometry.width || this.canvas.height !== geometry.height) {
       this.canvas.width = geometry.width;
       this.canvas.height = geometry.height;
@@ -105,8 +107,8 @@ export class Canvas2DRenderer {
       geometry.height,
       geometry.cropX,
       geometry.cropY,
-      0,
-      0,
+      display.channels,
+      display.tint === 'green' ? 1 : 0,
     ]);
     this.device.queue.writeBuffer(this.params, 0, values);
     if (!this.bindGroup || this.source !== image) {
@@ -252,7 +254,7 @@ export class WebGPURenderer {
     this.params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
-  render(buffer: GPUBuffer, geometry: ModelGeometry): void {
+  render(buffer: GPUBuffer, geometry: ModelGeometry, display: DisplayOptions = RGB_DISPLAY): void {
     if (this.resizeCanvas()) {
       // WebKit may discard the presentation backing store when the canvas size
       // changes. Explicitly reconfigure it before requesting the next texture.
@@ -265,8 +267,8 @@ export class WebGPURenderer {
       geometry.height,
       geometry.cropX,
       geometry.cropY,
-      0,
-      0,
+      display.channels,
+      display.tint === 'green' ? 1 : 0,
     ]);
     this.device.queue.writeBuffer(this.params, 0, values);
     if (!this.bindGroup || this.source !== buffer) {

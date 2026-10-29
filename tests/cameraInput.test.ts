@@ -75,4 +75,12 @@ describe('camera orientation calibration', () => {
     const flat = new Float32Array(N * N).fill(0.2);
     expect(orientationVerdict(estimateOrientation(flat, flat)).kind).toBe('inconclusive');
   });
+
+  it('still calibrates a dark, low-contrast scene', () => {
+    // A dark room: sRGB luma around 0.02 with faint structure (contrast ~0.01).
+    const dark = uprightScene().map((value) => 0.02 + (value - 0.3) * 0.03);
+    const estimate = estimateOrientation(dark, unrotate(dark, 1));
+    expect(estimate.contrast).toBeLessThan(0.025);
+    expect(orientationVerdict(estimate)).toEqual({ kind: 'accept', quarterTurns: 1 });
+  });
 });

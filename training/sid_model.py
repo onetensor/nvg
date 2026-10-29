@@ -8,15 +8,17 @@ from torch.nn import functional as F
 class SIDUNet(nn.Module):
     """NCHW equivalent of the official Sony SID TensorFlow network.
 
-    The defaults (4 packed Bayer channels, base width 32) are the official
-    architecture. ``in_channels=12`` accepts 2x2-packed linear RGB directly, and
-    a smaller ``width`` scales every level uniformly.
+    The defaults (4 packed Bayer channels, base width 32, RGB output) are the
+    official architecture. ``in_channels=12`` accepts 2x2-packed linear RGB
+    directly, a smaller ``width`` scales every level uniformly, and
+    ``out_channels=4`` produces a single (luminance) output plane.
     """
 
-    def __init__(self, in_channels: int = 4, width: int = 32) -> None:
+    def __init__(self, in_channels: int = 4, width: int = 32, out_channels: int = 12) -> None:
         super().__init__()
         self.in_channels = in_channels
         self.width = width
+        self.out_channels = out_channels
         c1, c2, c3, c4, c5 = (width * factor for factor in (1, 2, 4, 8, 16))
         self.conv1_1 = nn.Conv2d(in_channels, c1, 3, padding=1)
         self.conv1_2 = nn.Conv2d(c1, c1, 3, padding=1)
@@ -40,7 +42,7 @@ class SIDUNet(nn.Module):
         self.up9 = nn.ConvTranspose2d(c2, c1, 2, stride=2, bias=False)
         self.conv9_1 = nn.Conv2d(c2, c1, 3, padding=1)
         self.conv9_2 = nn.Conv2d(c1, c1, 3, padding=1)
-        self.conv10 = nn.Conv2d(c1, 12, 1)
+        self.conv10 = nn.Conv2d(c1, out_channels, 1)
 
     @staticmethod
     def activate(value: torch.Tensor) -> torch.Tensor:
@@ -75,6 +77,7 @@ def load_sid(path: str, device: torch.device | str = "cpu") -> SIDUNet:
     model = SIDUNet(
         in_channels=int(payload.get("in_channels", 4)) if wrapped else 4,
         width=int(payload.get("width", 32)) if wrapped else 32,
+        out_channels=int(payload.get("out_channels", 12)) if wrapped else 12,
     ).to(device)
     model.load_state_dict(state, strict=True)
     return model
@@ -107,11 +110,38 @@ def direct_input(
     return torch.cat((packed, counts[:, None].clamp_min(1).rsqrt()), dim=1)
 
 
+# Rec. 709 luma weights, applied to display-encoded RGB.
+LUMA_WEIGHTS = (0.2126, 0.7152, 0.0722)
+
+
+def luma(rgb: torch.Tensor) -> torch.Tensor:
+    """[B, 3, H, W] display RGB -> [B, 1, H, W] luma."""
+    weights = torch.tensor(LUMA_WEIGHTS, dtype=rgb.dtype, device=rgb.device)
+    return (rgb * weights[None, :, None, None]).sum(dim=1, keepdim=True)
+
+
+def to_mono(source: SIDUNet) -> SIDUNet:
+    """A single-output copy whose output is exactly the luma of the source's (unclamped) RGB.
+
+    PixelShuffle(2) maps head channel c * 4 + k to color c at sub-pixel k, and
+    luma is linear, so the new head is the luma-weighted sum of the color heads.
+    """
+    if source.out_channels != 12:
+        raise ValueError("Source must produce RGB")
+    model = SIDUNet(in_channels=source.in_channels, width=source.width, out_channels=4)
+    state = {key: value.clone() for key, value in source.state_dict().items()}
+    weight, bias = state["conv10.weight"], state["conv10.bias"]
+    state["conv10.weight"] = sum(w * weight[c * 4:(c + 1) * 4] for c, w in enumerate(LUMA_WEIGHTS))
+    state["conv10.bias"] = sum(w * bias[c * 4:(c + 1) * 4] for c, w in enumerate(LUMA_WEIGHTS))
+    model.load_state_dict(state, strict=True)
+    return model
+
+
 def add_noise_level_input(source: SIDUNet) -> SIDUNet:
     """A 13-channel copy of a 12-channel direct model whose extra plane starts at zero weight."""
     if source.in_channels != 12:
         raise ValueError("Source must be a 12-channel direct model")
-    model = SIDUNet(in_channels=13, width=source.width)
+    model = SIDUNet(in_channels=13, width=source.width, out_channels=source.out_channels)
     state = {key: value.clone() for key, value in source.state_dict().items()}
     weight = state["conv1_1.weight"]
     state["conv1_1.weight"] = torch.cat((weight, torch.zeros_like(weight[:, :1])), dim=1)

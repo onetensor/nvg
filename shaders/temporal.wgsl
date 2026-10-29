@@ -8,7 +8,7 @@ struct Params {
   max_frames: f32,
   motion_low: f32,
   motion_high: f32,
-  _pad1: f32,
+  width: u32,
 }
 
 // Motion-aware accumulation of the linear model input. Static pixels average
@@ -19,7 +19,38 @@ struct Params {
 @group(0) @binding(1) var<storage, read_write> history: array<f32>;
 @group(0) @binding(2) var<storage, read_write> frames: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
+@group(0) @binding(4) var<storage, read_write> motion_score: array<f32>;
 
+// Pass 1 (reads frame and history, writes only motion_score): the signed
+// change in sqrt space averaged over every channel of the 3x3 cell
+// neighbourhood. sqrt roughly stabilizes linear-light noise, and averaging
+// ~100 noisy differences lets real motion stand out where a per-channel
+// maximum is triggered by noise alone in dark frames.
+@compute @workgroup_size(256)
+fn motion(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if i >= params.plane { return; }
+  let height = params.plane / params.width;
+  let x = i32(i % params.width);
+  let y = i32(i / params.width);
+  var sum = 0.0;
+  var count = 0.0;
+  for (var dy = -1; dy <= 1; dy += 1) {
+    for (var dx = -1; dx <= 1; dx += 1) {
+      let nx = u32(clamp(x + dx, 0, i32(params.width) - 1));
+      let ny = u32(clamp(y + dy, 0, i32(height) - 1));
+      let cell = ny * params.width + nx;
+      for (var c = 0u; c < params.channels; c += 1u) {
+        let index = c * params.plane + cell;
+        sum += sqrt(max(frame[index], 0.0)) - sqrt(max(history[index], 0.0));
+        count += 1.0;
+      }
+    }
+  }
+  motion_score[i] = abs(sum / count);
+}
+
+// Pass 2: accumulate each cell using its motion score.
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
@@ -34,15 +65,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
 
-  // sqrt roughly stabilizes the variance of linear-light noise, so one
-  // threshold behaves similarly in shadows and highlights.
-  var delta = 0.0;
-  for (var c = 0u; c < params.channels; c += 1u) {
-    let now = sqrt(max(frame[c * params.plane + i], 0.0));
-    let old = sqrt(max(history[c * params.plane + i], 0.0));
-    delta = max(delta, abs(now - old));
-  }
-  let still = 1.0 - smoothstep(params.motion_low, params.motion_high, delta);
+  let still = 1.0 - smoothstep(params.motion_low, params.motion_high, motion_score[i]);
   let count = 1.0 + (min(frames[i] + 1.0, params.max_frames) - 1.0) * still;
   for (var c = 0u; c < params.channels; c += 1u) {
     let index = c * params.plane + i;

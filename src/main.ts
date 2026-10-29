@@ -1,13 +1,13 @@
 import './styles.css';
 import { AutoGainController, sliderToGain } from './autoGain';
 import { CameraController, type CameraInfo } from './camera';
-import { downloadBlob, FrameCapture } from './capture';
+import { captureArchive, CaptureStore, FrameCapture, shareOrDownload } from './capture';
 import { AdaptiveResolution, modelGeometry, orientResolution, resolutionByLabel } from './geometry';
 import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
 import { isAppleMobileWebKit } from './platform';
 import { formatDebug, Profiler } from './profiler';
-import type { AdapterMode, LuminanceStats, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
+import type { AdapterMode, LuminanceStats, MonoTint, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
 import { applyView, controls, selectedValues, setStatus } from './ui/controls';
 
 const ui = controls();
@@ -16,6 +16,7 @@ const profiler = new Profiler();
 const autoGain = new AutoGainController();
 const adaptiveResolution = new AdaptiveResolution();
 const capture = new FrameCapture();
+const captureStore = new CaptureStore();
 const CAPTURE_FRAMES = 16;
 
 let metadata: ModelMetadata | null = null;
@@ -200,6 +201,9 @@ async function initializePipeline(): Promise<void> {
     appleMobileWebKit,
   );
   await pipeline.initialize((message) => setStatus(ui, message));
+  pipeline.tint = ui.tint.value as MonoTint;
+  // The tint only applies to luminance-only models.
+  ui.tint.disabled = pipeline.outputChannels !== 1;
   ui.model.disabled = true;
   if (useFixed360) {
     ui.resolution.disabled = true;
@@ -225,17 +229,23 @@ async function initializePipeline(): Promise<void> {
 /** Feeds every camera frame, processed or skipped, to an active capture. */
 function captureFrame(now: number): void {
   if (!capture.active) return;
-  capture.grab(ui.video, now).then((archive) => {
-    if (!archive) return;
-    downloadBlob(archive, `sid-live-capture-${new Date().toISOString().replace(/[:.]/g, '-')}.tar`);
-    ui.capture.disabled = false;
-    ui.capture.textContent = 'Capture frames';
-    setStatus(ui, `Saved ${CAPTURE_FRAMES} camera frames`, 'ok');
+  capture.grab(ui.video, now).then(async (files) => {
+    if (!files) return;
+    await captureStore.add(files);
+    await refreshCaptureUi();
+    setStatus(ui, `Capture kept on this device (${await captureStore.count()} total)`, 'ok');
   }).catch((error: unknown) => {
-    ui.capture.disabled = false;
-    ui.capture.textContent = 'Capture frames';
+    void refreshCaptureUi();
     setStatus(ui, `Capture failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
   });
+}
+
+async function refreshCaptureUi(): Promise<void> {
+  const count = await captureStore.count();
+  ui.capture.disabled = capture.active;
+  ui.capture.textContent = capture.active ? 'Capturing…' : count ? `Capture (${count})` : 'Capture';
+  ui.captureExport.hidden = count === 0;
+  ui.captureClear.hidden = count === 0;
 }
 
 async function processFrame(now: number): Promise<void> {
@@ -329,10 +339,11 @@ ui.view.addEventListener('change', () => {
 ui.adapter.addEventListener('change', () => pipeline?.resetTemporal());
 ui.resolution.addEventListener('change', () => setGeometry(selectedValues(ui).resolution));
 ui.temporal.addEventListener('change', () => pipeline?.resetTemporal());
+ui.tint.addEventListener('change', () => {
+  if (pipeline) pipeline.tint = ui.tint.value as MonoTint;
+});
 ui.capture.addEventListener('click', () => {
   if (capture.active || !ui.video.videoWidth) return;
-  ui.capture.disabled = true;
-  ui.capture.textContent = 'Capturing…';
   capture.start(CAPTURE_FRAMES, {
     camera: cameraInfo,
     trackSettings: ui.video.srcObject instanceof MediaStream
@@ -345,6 +356,30 @@ ui.capture.addEventListener('click', () => {
     temporal: selectedValues(ui).temporal,
     inputStats: inputStats ?? null,
   });
+  void refreshCaptureUi();
+});
+ui.captureExport.addEventListener('click', () => {
+  ui.captureExport.disabled = true;
+  void (async () => {
+    try {
+      const captures = await captureStore.all();
+      if (!captures.length) return;
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      await shareOrDownload(await captureArchive(captures), `sid-live-captures-${stamp}.tar`);
+      setStatus(ui, `Exported ${captures.length} capture${captures.length === 1 ? '' : 's'}; Clear removes them`, 'ok');
+    } catch (error) {
+      // Dismissing the share sheet rejects with AbortError; nothing is lost.
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setStatus(ui, `Export failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      }
+    } finally {
+      ui.captureExport.disabled = false;
+    }
+  })();
+});
+ui.captureClear.addEventListener('click', () => {
+  if (!window.confirm('Delete all captures stored on this device?')) return;
+  void captureStore.clear().then(refreshCaptureUi);
 });
 ui.debug.addEventListener('change', () => { ui.debugOverlay.hidden = !ui.debug.checked; });
 ui.autoGain.addEventListener('change', () => {
@@ -381,6 +416,7 @@ window.addEventListener('pagehide', () => {
 });
 
 applyView(ui, selectedValues(ui).view);
+void refreshCaptureUi();
 updateRequirements();
 updateGainUi();
 void preloadSelectedModels().then((cached) => {
