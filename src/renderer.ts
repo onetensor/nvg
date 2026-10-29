@@ -1,5 +1,63 @@
 import postprocessShader from '../shaders/postprocess.wgsl?raw';
-import type { ModelGeometry } from './types';
+import type { ModelGeometry, OutputStats } from './types';
+
+export class Canvas2DRenderer {
+  private readonly context: CanvasRenderingContext2D;
+  private pixels: ImageData | null = null;
+
+  constructor(private readonly canvas: HTMLCanvasElement) {
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new Error('Could not create a Canvas2D display context.');
+    this.context = context;
+  }
+
+  render(image: Float32Array, geometry: ModelGeometry): OutputStats {
+    if (this.canvas.width !== geometry.width || this.canvas.height !== geometry.height) {
+      this.canvas.width = geometry.width;
+      this.canvas.height = geometry.height;
+      this.pixels = null;
+    }
+    this.pixels ??= this.context.createImageData(geometry.width, geometry.height);
+    const rgba = this.pixels.data;
+    const plane = geometry.paddedWidth * geometry.paddedHeight;
+    let minimum = Number.POSITIVE_INFINITY;
+    let maximum = Number.NEGATIVE_INFINITY;
+    let sum = 0;
+    let nonFinite = 0;
+    let destination = 0;
+    for (let y = 0; y < geometry.height; y += 1) {
+      const sourceRow = (y + geometry.cropY) * geometry.paddedWidth + geometry.cropX;
+      for (let x = 0; x < geometry.width; x += 1) {
+        const source = sourceRow + x;
+        for (let channel = 0; channel < 3; channel += 1) {
+          const raw = image[channel * plane + source]!;
+          const value = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0;
+          if (!Number.isFinite(raw)) nonFinite += 1;
+          else {
+            minimum = Math.min(minimum, raw);
+            maximum = Math.max(maximum, raw);
+            sum += raw;
+          }
+          rgba[destination + channel] = Math.round(value * 255);
+        }
+        rgba[destination + 3] = 255;
+        destination += 4;
+      }
+    }
+    this.context.putImageData(this.pixels, 0, 0);
+    const finite = geometry.width * geometry.height * 3 - nonFinite;
+    return {
+      min: finite ? minimum : 0,
+      mean: finite ? sum / finite : 0,
+      max: finite ? maximum : 0,
+      nonFinite,
+    };
+  }
+
+  dispose(): void {
+    this.pixels = null;
+  }
+}
 
 export class WebGPURenderer {
   private readonly context: GPUCanvasContext;
@@ -14,6 +72,7 @@ export class WebGPURenderer {
     if (!context) throw new Error('Could not create a WebGPU canvas context.');
     this.context = context;
     this.format = navigator.gpu.getPreferredCanvasFormat();
+    this.resizeCanvas();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque' });
     const module = device.createShaderModule({ label: 'SID display shader', code: postprocessShader });
     this.pipeline = device.createRenderPipeline({
@@ -27,7 +86,11 @@ export class WebGPURenderer {
   }
 
   render(buffer: GPUBuffer, geometry: ModelGeometry): void {
-    this.resizeCanvas();
+    if (this.resizeCanvas()) {
+      // WebKit may discard the presentation backing store when the canvas size
+      // changes. Explicitly reconfigure it before requesting the next texture.
+      this.context.configure({ device: this.device, format: this.format, alphaMode: 'opaque' });
+    }
     const values = new Uint32Array([
       geometry.paddedWidth,
       geometry.paddedHeight,
@@ -72,13 +135,15 @@ export class WebGPURenderer {
     this.context.unconfigure();
   }
 
-  private resizeCanvas(): void {
+  private resizeCanvas(): boolean {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const width = Math.max(1, Math.round(this.canvas.clientWidth * dpr));
     const height = Math.max(1, Math.round(this.canvas.clientHeight * dpr));
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
       this.canvas.height = height;
+      return true;
     }
+    return false;
   }
 }

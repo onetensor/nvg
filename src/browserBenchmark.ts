@@ -17,12 +17,11 @@ async function benchmark(
   useFp16: boolean,
   iterations: number,
 ): Promise<Record<string, unknown>> {
-  const fixed = asset.fixed360p!;
-  const url = useFp16 && fixed.fp16?.available ? fixed.fp16.url : fixed.url;
+  const url = useFp16 && asset.fp16?.available ? asset.fp16.url : asset.url;
   const session = await ort.InferenceSession.create(modelUrl(url), {
     executionProviders: ['webgpu'],
     graphOptimizationLevel: 'all',
-    enableGraphCapture: true,
+    enableGraphCapture: false,
     preferredOutputLocation: { [asset.outputName]: 'gpu-buffer' },
   });
   const device = await ort.env.webgpu.device;
@@ -63,9 +62,6 @@ async function run(): Promise<void> {
     const response = await fetch(`${import.meta.env.BASE_URL}models/metadata.json`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`metadata: ${response.status}`);
     const metadata = await response.json() as { sidJoint: ModelAsset; adapter: ModelAsset };
-    if (!metadata.sidJoint.fixed360p?.available || !metadata.adapter.fixed360p?.available) {
-      throw new Error('Fixed 360p assets are not packaged.');
-    }
     const gpuAdapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!gpuAdapter?.features.has('shader-f16')) {
       throw new Error('This production benchmark is FP16-only, but shader-f16 is unavailable.');
@@ -73,12 +69,12 @@ async function run(): Promise<void> {
     const useFp16 = true;
     const iterations = 12;
     const adapter = await benchmark(
-      'adapter', metadata.adapter, [1, 3, 384, 640], [1, 4, 192, 320], useFp16, iterations,
+      'adapter', metadata.adapter, [1, 3, 192, 320], [1, 4, 96, 160], useFp16, iterations,
     );
     const sid = await benchmark(
-      'joint SID', metadata.sidJoint, [1, 4, 192, 320], [1, 3, 384, 640], useFp16, iterations,
+      'joint SID', metadata.sidJoint, [1, 4, 96, 160], [1, 3, 192, 320], useFp16, iterations,
     );
-    result.textContent = JSON.stringify({ provider: 'webgpu', graphCapture: true, useFp16, adapter, sid }, null, 2);
+    result.textContent = JSON.stringify({ provider: 'webgpu', graphCapture: false, useFp16, adapter, sid }, null, 2);
   } catch (error) {
     result.textContent = `FAILED\n${error instanceof Error ? error.stack ?? error.message : String(error)}`;
   } finally {

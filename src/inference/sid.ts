@@ -3,7 +3,7 @@ import { ONNXWebGPUBackend } from './onnxWebgpu';
 import { PseudoRawGain } from './adapter';
 import { GPUPreprocessor } from '../preprocessing/gpuPreprocess';
 import { TemporalFilter } from '../temporal';
-import { WebGPURenderer } from '../renderer';
+import { Canvas2DRenderer, WebGPURenderer } from '../renderer';
 import type { AdapterMode, ModelGeometry, ModelMetadata, PipelineResult, TemporalLevel } from '../types';
 
 export class SIDPipeline {
@@ -14,6 +14,7 @@ export class SIDPipeline {
   private gainTransform!: PseudoRawGain;
   private temporal!: TemporalFilter;
   private renderer!: WebGPURenderer;
+  private canvas2dRenderer!: Canvas2DRenderer;
   private initialized = false;
 
   constructor(
@@ -22,6 +23,7 @@ export class SIDPipeline {
     graphCapture = false,
     sidOutputShape?: readonly number[],
     adapterOutputShape?: readonly number[],
+    private readonly cpuDisplay = false,
   ) {
     this.sid = new ONNXWebGPUBackend({
       asset: metadata.sid,
@@ -53,7 +55,8 @@ export class SIDPipeline {
     this.preprocessor = new GPUPreprocessor(this.device);
     this.gainTransform = new PseudoRawGain(this.device);
     this.temporal = new TemporalFilter(this.device);
-    this.renderer = new WebGPURenderer(this.canvas, this.device);
+    if (this.cpuDisplay) this.canvas2dRenderer = new Canvas2DRenderer(this.canvas);
+    else this.renderer = new WebGPURenderer(this.canvas, this.device);
     this.initialized = true;
   }
 
@@ -98,14 +101,20 @@ export class SIDPipeline {
       }
 
       const postStart = performance.now();
-      const displayBuffer = this.temporal.apply(
-        sidOutput.gpuBuffer,
-        geometry.paddedWidth,
-        geometry.paddedHeight,
-        temporalLevel,
-      );
-      this.renderer.render(displayBuffer, geometry);
-      await this.device.queue.onSubmittedWorkDone();
+      let outputStats;
+      if (this.cpuDisplay) {
+        const values = await sidOutput.getData() as Float32Array;
+        outputStats = this.canvas2dRenderer.render(values, geometry);
+      } else {
+        const displayBuffer = this.temporal.apply(
+          sidOutput.gpuBuffer,
+          geometry.paddedWidth,
+          geometry.paddedHeight,
+          temporalLevel,
+        );
+        this.renderer.render(displayBuffer, geometry);
+        await this.device.queue.onSubmittedWorkDone();
+      }
       const postprocess = performance.now() - postStart;
       const stats = prepared.stats ? await prepared.stats : undefined;
 
@@ -118,6 +127,7 @@ export class SIDPipeline {
           total: performance.now() - totalStart,
         },
         ...(stats ? { stats } : {}),
+        ...(outputStats ? { outputStats } : {}),
         gain,
       };
     } finally {
@@ -136,7 +146,8 @@ export class SIDPipeline {
     this.preprocessor.dispose();
     this.gainTransform.dispose();
     this.temporal.dispose();
-    this.renderer.dispose();
+    if (this.cpuDisplay) this.canvas2dRenderer.dispose();
+    else this.renderer.dispose();
     this.initialized = false;
   }
 }

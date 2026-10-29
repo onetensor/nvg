@@ -1,7 +1,7 @@
 export type AdapterMode = 'manual' | 'learned';
 export type ModelVariant = 'joint' | 'original';
 export type ViewMode = 'original' | 'enhanced' | 'split';
-export type ResolutionChoice = 'auto' | '360p' | '540p' | '720p' | '1080p';
+export type ResolutionChoice = 'auto' | '180p' | '360p' | '540p' | '720p' | '1080p';
 export type TemporalLevel = 'off' | 'low' | 'medium' | 'high';
 export type TargetMode = '30' | '15' | 'quality';
 
@@ -26,6 +26,13 @@ export interface LuminanceStats {
   p50: number;
   p90: number;
   blackFraction: number;
+}
+
+export interface OutputStats {
+  min: number;
+  mean: number;
+  max: number;
+  nonFinite: number;
 }
 
 export interface ModelAsset {
@@ -89,6 +96,7 @@ export interface TimingSample {
 export interface PipelineResult {
   timing: TimingSample;
   stats?: LuminanceStats;
+  outputStats?: OutputStats;
   gain: number;
 }
 
@@ -106,6 +114,7 @@ export interface DebugSnapshot {
   modelVariant: ModelVariant;
   gain: number;
   automaticGain: number;
+  outputStats?: OutputStats;
   framesReceived: number;
   framesProcessed: number;
   framesSkipped: number;
