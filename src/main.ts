@@ -26,6 +26,7 @@ let frameErrors = 0;
 let activeModel: ModelVariant = 'joint';
 let metadataPromise: Promise<ModelMetadata> | null = null;
 let outputStats: PipelineResult['outputStats'];
+let inputStats: PipelineResult['stats'];
 
 function modelUrl(url: string): string {
   if (url.startsWith('./')) return `${import.meta.env.BASE_URL}${url.slice(2)}`;
@@ -111,6 +112,7 @@ function updateDebug(now: number, mode: AdapterMode): void {
     adapterMode: mode,
     gain: currentGain,
     automaticGain: ui.autoGain.checked ? currentGain : 0,
+    ...(inputStats ? { inputStats } : {}),
     ...(outputStats ? { outputStats } : {}),
   }));
 }
@@ -203,6 +205,7 @@ async function processFrame(now: number): Promise<void> {
   try {
     const result = await pipeline.process(ui.video, geometry, state.adapter, currentGain, state.temporal);
     if (result.outputStats) outputStats = result.outputStats;
+    if (result.stats) inputStats = result.stats;
     profiler.frameProcessed(result.timing);
     frameErrors = 0;
     if (result.stats && ui.autoGain.checked) {

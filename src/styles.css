@@ -19,7 +19,8 @@ button, select { -webkit-tap-highlight-color: transparent; }
 #camera { z-index: 1; }
 #enhanced { z-index: 2; }
 .stage[data-view="original"] #enhanced { display: none; }
-.stage[data-view="enhanced"] #camera { visibility: hidden; }
+/* Keep the video composited behind the opaque enhanced canvas. WebKit can
+   return black from importExternalTexture() when its source is visibility:hidden. */
 .stage[data-view="split"] #enhanced { clip-path: inset(0 0 0 var(--split)); }
 
 .topbar { position: absolute; z-index: 8; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: calc(env(safe-area-inset-top) + 16px) 18px 12px; pointer-events: none; background: linear-gradient(rgba(0,0,0,.62), transparent); }

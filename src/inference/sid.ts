@@ -55,7 +55,7 @@ export class SIDPipeline {
     this.preprocessor = new GPUPreprocessor(this.device);
     this.gainTransform = new PseudoRawGain(this.device);
     this.temporal = new TemporalFilter(this.device);
-    if (this.cpuDisplay) this.canvas2dRenderer = new Canvas2DRenderer(this.canvas);
+    if (this.cpuDisplay) this.canvas2dRenderer = new Canvas2DRenderer(this.canvas, this.device);
     else this.renderer = new WebGPURenderer(this.canvas, this.device);
     this.initialized = true;
   }
@@ -103,8 +103,9 @@ export class SIDPipeline {
       const postStart = performance.now();
       let outputStats;
       if (this.cpuDisplay) {
-        const values = await sidOutput.getData() as Float32Array;
-        outputStats = this.canvas2dRenderer.render(values, geometry);
+        // Pack and map the smaller RGBA8 image asynchronously. Inference does
+        // not wait for Safari's slow GPU-to-CPU presentation boundary.
+        outputStats = this.canvas2dRenderer.render(sidOutput.gpuBuffer, geometry);
       } else {
         const displayBuffer = this.temporal.apply(
           sidOutput.gpuBuffer,

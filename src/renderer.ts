@@ -1,61 +1,175 @@
 import postprocessShader from '../shaders/postprocess.wgsl?raw';
+import readbackShader from '../shaders/readback.wgsl?raw';
 import type { ModelGeometry, OutputStats } from './types';
+
+interface ReadbackSlot {
+  buffer: GPUBuffer;
+  busy: boolean;
+  pixels: ImageData | null;
+  width: number;
+  height: number;
+}
 
 export class Canvas2DRenderer {
   private readonly context: CanvasRenderingContext2D;
-  private pixels: ImageData | null = null;
+  private readonly pipeline: GPUComputePipeline;
+  private readonly params: GPUBuffer;
+  private readonly packed: GPUBuffer;
+  private readonly slots: ReadbackSlot[];
+  private source: GPUBuffer | null = null;
+  private bindGroup: GPUBindGroup | null = null;
+  private sequence = 0;
+  private presentedSequence = 0;
+  private lastStats: OutputStats | undefined;
+  private disposed = false;
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(private readonly canvas: HTMLCanvasElement, private readonly device: GPUDevice) {
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) throw new Error('Could not create a Canvas2D display context.');
     this.context = context;
+    this.pipeline = device.createComputePipeline({
+      label: 'SID RGBA readback packer',
+      layout: 'auto',
+      compute: {
+        module: device.createShaderModule({ label: 'SID RGBA readback shader', code: readbackShader }),
+        entryPoint: 'main',
+      },
+    });
+    this.params = device.createBuffer({
+      label: 'SID readback parameters',
+      size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    // Production exposes 180p and 360p. Three staging buffers let mapping
+    // overlap subsequent inference without allocating memory per frame.
+    const maximumBytes = 640 * 360 * 4;
+    this.packed = device.createBuffer({
+      label: 'SID packed RGBA',
+      size: maximumBytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    this.slots = Array.from({ length: 3 }, (_, index) => ({
+      buffer: device.createBuffer({
+        label: `SID asynchronous readback ${index + 1}`,
+        size: maximumBytes,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      }),
+      busy: false,
+      pixels: null,
+      width: 0,
+      height: 0,
+    }));
   }
 
-  render(image: Float32Array, geometry: ModelGeometry): OutputStats {
+  render(image: GPUBuffer, geometry: ModelGeometry): OutputStats | undefined {
     if (this.canvas.width !== geometry.width || this.canvas.height !== geometry.height) {
       this.canvas.width = geometry.width;
       this.canvas.height = geometry.height;
-      this.pixels = null;
     }
-    this.pixels ??= this.context.createImageData(geometry.width, geometry.height);
-    const rgba = this.pixels.data;
-    const plane = geometry.paddedWidth * geometry.paddedHeight;
-    let minimum = Number.POSITIVE_INFINITY;
-    let maximum = Number.NEGATIVE_INFINITY;
-    let sum = 0;
-    let nonFinite = 0;
-    let destination = 0;
-    for (let y = 0; y < geometry.height; y += 1) {
-      const sourceRow = (y + geometry.cropY) * geometry.paddedWidth + geometry.cropX;
-      for (let x = 0; x < geometry.width; x += 1) {
-        const source = sourceRow + x;
-        for (let channel = 0; channel < 3; channel += 1) {
-          const raw = image[channel * plane + source]!;
-          const value = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0;
-          if (!Number.isFinite(raw)) nonFinite += 1;
-          else {
-            minimum = Math.min(minimum, raw);
-            maximum = Math.max(maximum, raw);
-            sum += raw;
-          }
-          rgba[destination + channel] = Math.round(value * 255);
-        }
-        rgba[destination + 3] = 255;
-        destination += 4;
-      }
+
+    const slot = this.slots.find((candidate) => !candidate.busy);
+    if (!slot) return this.lastStats;
+    const byteLength = geometry.width * geometry.height * 4;
+    const values = new Uint32Array([
+      geometry.paddedWidth,
+      geometry.paddedHeight,
+      geometry.width,
+      geometry.height,
+      geometry.cropX,
+      geometry.cropY,
+      0,
+      0,
+    ]);
+    this.device.queue.writeBuffer(this.params, 0, values);
+    if (!this.bindGroup || this.source !== image) {
+      this.source = image;
+      this.bindGroup = this.device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: image } },
+          { binding: 1, resource: { buffer: this.packed } },
+          { binding: 2, resource: { buffer: this.params } },
+        ],
+      });
     }
-    this.context.putImageData(this.pixels, 0, 0);
-    const finite = geometry.width * geometry.height * 3 - nonFinite;
-    return {
-      min: finite ? minimum : 0,
-      mean: finite ? sum / finite : 0,
-      max: finite ? maximum : 0,
-      nonFinite,
-    };
+    const encoder = this.device.createCommandEncoder({ label: 'SID asynchronous display encoder' });
+    const pass = encoder.beginComputePass({ label: 'SID RGBA packing pass' });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.dispatchWorkgroups(Math.ceil(geometry.width / 8), Math.ceil(geometry.height / 8));
+    pass.end();
+    encoder.copyBufferToBuffer(this.packed, 0, slot.buffer, 0, byteLength);
+    this.device.queue.submit([encoder.finish()]);
+
+    slot.busy = true;
+    const sequence = ++this.sequence;
+    void this.present(slot, byteLength, geometry.width, geometry.height, sequence);
+    return this.lastStats;
   }
 
   dispose(): void {
-    this.pixels = null;
+    this.disposed = true;
+    this.params.destroy();
+    this.packed.destroy();
+    for (const slot of this.slots) {
+      if (slot.buffer.mapState === 'mapped') slot.buffer.unmap();
+      slot.buffer.destroy();
+      slot.pixels = null;
+    }
+    this.bindGroup = null;
+    this.source = null;
+  }
+
+  private async present(
+    slot: ReadbackSlot,
+    byteLength: number,
+    width: number,
+    height: number,
+    sequence: number,
+  ): Promise<void> {
+    try {
+      await slot.buffer.mapAsync(GPUMapMode.READ, 0, byteLength);
+      if (this.disposed) return;
+      if (!slot.pixels || slot.width !== width || slot.height !== height) {
+        slot.pixels = this.context.createImageData(width, height);
+        slot.width = width;
+        slot.height = height;
+      }
+      const mapped = new Uint8Array(slot.buffer.getMappedRange(0, byteLength));
+      slot.pixels.data.set(mapped);
+
+      // Debug statistics do not need to tax every displayed frame.
+      if (sequence % 30 === 1) {
+        let minimum = 255;
+        let maximum = 0;
+        let sum = 0;
+        for (let offset = 0; offset < mapped.length; offset += 4) {
+          const red = mapped[offset]!;
+          const green = mapped[offset + 1]!;
+          const blue = mapped[offset + 2]!;
+          minimum = Math.min(minimum, red, green, blue);
+          maximum = Math.max(maximum, red, green, blue);
+          sum += red + green + blue;
+        }
+        this.lastStats = {
+          min: minimum / 255,
+          mean: sum / (width * height * 3 * 255),
+          max: maximum / 255,
+          nonFinite: 0,
+        };
+      }
+      slot.buffer.unmap();
+      if (sequence >= this.presentedSequence &&
+          this.canvas.width === width && this.canvas.height === height) {
+        this.presentedSequence = sequence;
+        this.context.putImageData(slot.pixels, 0, 0);
+      }
+    } catch (error) {
+      if (!this.disposed) console.warn('Asynchronous SID display readback failed.', error);
+    } finally {
+      if (slot.buffer.mapState === 'mapped') slot.buffer.unmap();
+      slot.busy = false;
+    }
   }
 }
 
