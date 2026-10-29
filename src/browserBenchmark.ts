@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web/webgpu';
+import * as ort from 'onnxruntime-web';
 import type { ModelAsset } from './types';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
@@ -57,6 +57,9 @@ async function run(): Promise<void> {
   result.textContent = 'Loading fixed-shape models…';
   try {
     if (!navigator.gpu) throw new Error('navigator.gpu is unavailable');
+    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.proxy = false;
+    ort.env.wasm.initTimeout = 20_000;
     const response = await fetch(`${import.meta.env.BASE_URL}models/metadata.json`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`metadata: ${response.status}`);
     const metadata = await response.json() as { sidJoint: ModelAsset; adapter: ModelAsset };
@@ -64,7 +67,10 @@ async function run(): Promise<void> {
       throw new Error('Fixed 360p assets are not packaged.');
     }
     const gpuAdapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-    const useFp16 = gpuAdapter?.features.has('shader-f16') === true;
+    if (!gpuAdapter?.features.has('shader-f16')) {
+      throw new Error('This production benchmark is FP16-only, but shader-f16 is unavailable.');
+    }
+    const useFp16 = true;
     const iterations = 12;
     const adapter = await benchmark(
       'adapter', metadata.adapter, [1, 3, 384, 640], [1, 4, 192, 320], useFp16, iterations,

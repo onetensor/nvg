@@ -1,5 +1,23 @@
-import * as ort from 'onnxruntime-web/webgpu';
+import * as ort from 'onnxruntime-web';
 import type { BackendOptions, InferenceBackend, InferenceTensor } from './backend';
+
+const modelDownloads = new Map<string, Promise<Uint8Array>>();
+
+export function preloadModel(url: string): Promise<Uint8Array> {
+  const existing = modelDownloads.get(url);
+  if (existing) return existing;
+  const download = fetch(url, { cache: 'force-cache' })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Could not download ${url} (${response.status}).`);
+      return new Uint8Array(await response.arrayBuffer());
+    })
+    .catch((error) => {
+      modelDownloads.delete(url);
+      throw error;
+    });
+  modelDownloads.set(url, download);
+  return download;
+}
 
 export class ONNXWebGPUBackend implements InferenceBackend {
   get name(): string {
@@ -12,6 +30,7 @@ export class ONNXWebGPUBackend implements InferenceBackend {
   private inputBuffer: GPUBuffer | null = null;
   private inputDims = '';
   private inputTensor: ort.Tensor | null = null;
+  private validateNextRun = true;
 
   constructor(private readonly options: BackendOptions) {}
 
@@ -20,13 +39,25 @@ export class ONNXWebGPUBackend implements InferenceBackend {
     if (!navigator.gpu) throw new Error('WebGPU is unavailable in this browser.');
 
     ort.env.logLevel = 'warning';
+    // GitHub Pages cannot provide COOP/COEP, and Safari's WebGPU/WASM bridge is
+    // substantially more reliable without a worker pool during initialization.
+    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.proxy = false;
+    ort.env.wasm.initTimeout = 20_000;
     ort.env.webgpu.powerPreference = 'high-performance';
-    this.session = await ort.InferenceSession.create(this.options.asset.url, {
-      executionProviders: ['webgpu'],
-      graphOptimizationLevel: 'all',
-      enableGraphCapture: this.options.graphCapture ?? false,
-      preferredOutputLocation: { [this.options.asset.outputName]: 'gpu-buffer' },
-    });
+    const model = await preloadModel(this.options.asset.url);
+    try {
+      this.session = await ort.InferenceSession.create(model, {
+        executionProviders: ['webgpu'],
+        graphOptimizationLevel: 'all',
+        enableGraphCapture: this.options.graphCapture ?? false,
+        preferredOutputLocation: { [this.options.asset.outputName]: 'gpu-buffer' },
+      });
+    } finally {
+      // Session creation copies the graph into ORT-owned memory. Keep no second
+      // 16 MB JavaScript copy once initialization has finished.
+      modelDownloads.delete(this.options.asset.url);
+    }
 
     if (!this.session.inputNames.includes(this.options.asset.inputName)) {
       throw new Error(`${this.options.label} input '${this.options.asset.inputName}' was not found.`);
@@ -52,7 +83,19 @@ export class ONNXWebGPUBackend implements InferenceBackend {
   async run(input: InferenceTensor): Promise<InferenceTensor> {
     if (!this.session) throw new Error(`${this.options.label} backend has not initialized.`);
     const fetches = this.outputTensor ? { [this.options.asset.outputName]: this.outputTensor } : undefined;
-    const results = await this.session.run({ [this.options.asset.inputName]: input }, fetches);
+    const device = this.validateNextRun ? await this.getDevice() : null;
+    device?.pushErrorScope('validation');
+    let results: ort.InferenceSession.OnnxValueMapType;
+    try {
+      results = await this.session.run({ [this.options.asset.inputName]: input }, fetches);
+      if (device) await device.queue.onSubmittedWorkDone();
+    } finally {
+      if (device) {
+        const gpuError = await device.popErrorScope();
+        this.validateNextRun = false;
+        if (gpuError) throw new Error(`${this.options.label} WebGPU validation failed: ${gpuError.message}`);
+      }
+    }
     const output = results[this.options.asset.outputName];
     if (!(output instanceof ort.Tensor)) throw new Error(`${this.options.label} returned no tensor output.`);
     if (output.location !== 'gpu-buffer') throw new Error(`${this.options.label} output left GPU memory.`);
@@ -86,5 +129,6 @@ export class ONNXWebGPUBackend implements InferenceBackend {
     this.outputTensor = null;
     this.outputBuffer?.destroy();
     this.outputBuffer = null;
+    this.validateNextRun = true;
   }
 }

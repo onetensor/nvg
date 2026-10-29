@@ -80,6 +80,7 @@ export function selectedValues(ui: Controls): {
 
 export function setStatus(ui: Controls, message: string, level: 'normal' | 'ok' | 'error' = 'normal'): void {
   ui.status.textContent = message;
+  ui.status.title = message;
   ui.status.dataset.level = level;
 }
 

@@ -43,9 +43,12 @@ export class SIDPipeline {
   get fp16Available(): boolean { return this.device?.features.has('shader-f16') ?? false; }
   get learnedAdapterAvailable(): boolean { return this.adapter !== null; }
 
-  async initialize(): Promise<void> {
+  async initialize(report?: (message: string) => void): Promise<void> {
+    report?.('Loading selected joint SID model (1/2)…');
     await this.sid.initialize();
+    report?.('Loading learned pseudo-RAW adapter (2/2)…');
     await this.adapter?.initialize();
+    report?.('Preparing camera GPU pipeline…');
     this.device = await this.sid.getDevice();
     this.preprocessor = new GPUPreprocessor(this.device);
     this.gainTransform = new PseudoRawGain(this.device);

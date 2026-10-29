@@ -1,6 +1,6 @@
 # SID Live
 
-SID Live is a static, privacy-preserving camera website that adapts processed Safari video into a four-channel **pseudo-RAW** representation and runs a Sony *Learning to See in the Dark* (SID) U-Net locally. The quality mode uses a jointly tuned SID while the untouched original checkpoint remains selectable and numerically validated. Camera frames are never uploaded.
+SID Live is a static, privacy-preserving camera website that adapts processed Safari video into a four-channel **pseudo-RAW** representation and runs a Sony *Learning to See in the Dark* (SID) U-Net locally. The production site uses the jointly tuned SID; the untouched original checkpoint remains in the repository as a numerically validated reproducibility artifact. Camera frames are never uploaded.
 
 The repository deliberately distinguishes implemented code from validated artifacts. Random or newly initialized weights are never presented as SID. `models/metadata.json` keeps enhancement disabled until the official checkpoint and trained adapter have been converted, measured, hashed, and packaged.
 
@@ -14,9 +14,9 @@ The repository deliberately distinguishes implemented code from validated artifa
 - GPU I/O binding: preprocessing, learned adapter, gain, SID, temporal filtering, and display share GPU storage buffers.
 - A tiny learned RGB → pseudo-RAW adapter (265,732 parameters at width 64), selected by validation ablation, followed by an optional low-learning-rate joint SID quality pass.
 - Logarithmic manual gain from 1× to 300× and a smoothed histogram-based automatic controller.
-- 360p, 540p, 720p, and 1080p processing; padding to multiples of 32 keeps all four packed-domain SID pooling stages valid.
+- Geometry and training tooling for 360p through 1080p; the production iPhone site is intentionally locked to the fastest fixed 360p graph.
 - Adaptive resolution, measured rolling timing/FPS, frame counters, split comparison, and motion-aware temporal stabilization.
-- A lossless fixed 640×384 performance path with static ONNX shapes, reusable GPU tensors, preallocated outputs, FP16 weights when supported, and WebGPU graph capture. Dynamic graphs remain available for Auto/540p/720p/1080p.
+- A lossless fixed 640×384 performance path with static ONNX shapes, reusable GPU tensors, FP16 weights, and WebGPU graph capture where supported.
 - Exact TensorFlow-checkpoint conversion, TensorFlow/PyTorch/ONNX validation, adapter training/export/evaluation, and browser fixture tooling.
 
 ## Run locally
@@ -50,6 +50,9 @@ the repository. For `onetensor/nvg`, the deployed site is:
 
 The Vite build uses relative asset URLs, so the repository subpath works for
 the app, validation fixture, benchmark page, WASM bundle, and model files.
+The production sync deliberately publishes only the fixed 360p FP16 joint SID
+and FP16 adapter. Those two files are preloaded in parallel and passed directly
+to ONNX Runtime; FP32, dynamic-shape, and original-SID graphs are not downloaded.
 GitHub Pages provides HTTPS (required for camera access), but not custom
 COOP/COEP headers; the deployed browser/device still needs to prove that the
 selected ONNX Runtime WebGPU build works without them.
@@ -174,7 +177,7 @@ python -m training.train_joint \
 
 This changes SID weights, so it is packaged as a separately named quality
 model. The original converted checkpoint and its equivalence fixtures remain
-available and selectable in the website.
+available in the repository, but are excluded from the production website.
 
 Evaluation reports learned and deterministic-baseline PSNR/SSIM on the same held-out samples. Retain the learned adapter only if it materially improves the frozen SID result.
 
@@ -219,12 +222,14 @@ No device numbers are fabricated. The debug overlay measures the live end-to-end
 |---|---|---|---:|---:|---:|---|
 | _not measured_ | — | — | — | — | — | — |
 
-The Auto policy begins at 360p and needs sustained timing evidence before moving up. Nominal sizes are internally padded (for example, 640×360 becomes 640×384) and cropped after SID, avoiding invalid U-Net skip shapes without distorting the displayed 16:9 region.
+The visible 640×360 frame is internally padded to 640×384 and cropped after SID, avoiding invalid U-Net skip shapes without distorting the displayed 16:9 region.
 
-For maximum throughput, 360p is the default. Its fixed-shape graph uses stable
+For maximum throughput, production is fixed at 360p. Its fixed-shape graph uses stable
 preallocated GPU buffers and graph capture; model, adapter, and resolution are
-locked after startup so captured bindings remain valid. Auto and higher
-resolutions intentionally use the dynamic graph. Histogram readback runs once
+locked after startup so captured bindings remain valid. On iPhone WebKit,
+graph capture and preallocated ONNX outputs are disabled because those advanced
+I/O bindings are not reliably implemented there. The established JSEP WebGPU
+path is used instead of ONNX Runtime's newer native WebGPU path. Histogram readback runs once
 per 30 processed frames, temporal filtering defaults Off, and the frame pump
 keeps at most one inference in flight so overload drops frames instead of
 building latency.

@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web/webgpu';
+import * as ort from 'onnxruntime-web';
 
 interface Fixture {
   name: string;
@@ -29,6 +29,9 @@ run.addEventListener('click', async () => {
   result.textContent = 'Loading fixture and model…';
   try {
     if (!navigator.gpu) throw new Error('navigator.gpu is unavailable');
+    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.proxy = false;
+    ort.env.wasm.initTimeout = 20_000;
     const manifestResponse = await fetch(`./validation/${fixtureSelect.value}/manifest.json`, { cache: 'no-store' });
     if (!manifestResponse.ok) throw new Error('Validation fixture is not packaged. Generate it with tools/export_browser_fixture.py.');
     const fixture = await manifestResponse.json() as Fixture;
