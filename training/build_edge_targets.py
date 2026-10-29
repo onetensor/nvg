@@ -3,7 +3,8 @@
 HED (soft output) runs on the clean long exposure after brightening it the way
 the runtime's auto gain would (median luminance to 0.18), because the app shows
 brightened output and HED misses edges in dim renderings. Each crop gets a
-uint8 512x512 map at ``edges/<split>/<crop>.npy``.
+uint8 512x512 map at ``edges/<split>/<crop>.npy`` and a thinned (one-pixel,
+0/255) version of its strong outlines at ``edges_thin/<split>/<crop>.npy``.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ def main() -> None:
     parser.add_argument("--data", required=True, help="Directory holding bursts/<split>/*.npz")
     args = parser.parse_args()
     from controlnet_aux import HEDdetector
+    from skimage.morphology import thin
 
     detector = HEDdetector.from_pretrained("lllyasviel/Annotators").to("cuda")
     root = Path(args.data)
@@ -30,8 +32,13 @@ def main() -> None:
                        if not path.name.endswith(".partial.npz"))
         destination = root / "edges" / split
         destination.mkdir(parents=True, exist_ok=True)
+        thin_destination = root / "edges_thin" / split
+        thin_destination.mkdir(parents=True, exist_ok=True)
         for index, path in enumerate(files):
             target = destination / path.with_suffix(".npy").name
+            thin_target = thin_destination / path.with_suffix(".npy").name
+            if target.exists() and not thin_target.exists():
+                np.save(thin_target, thin(np.load(target) > 128).astype(np.uint8) * 255)
             if target.exists():
                 continue
             with np.load(path) as data:
@@ -47,6 +54,7 @@ def main() -> None:
             if edges.shape != long.shape[:2]:
                 raise ValueError(f"Outline map {edges.shape} does not match crop {long.shape[:2]}")
             np.save(target, edges.astype(np.uint8))
+            np.save(thin_target, thin(edges > 128).astype(np.uint8) * 255)
             if index % 500 == 0:
                 print(f"EDGE_PROGRESS split={split} {index}/{len(files)}", flush=True)
         print(f"EDGES_DONE split={split} crops={len(files)}", flush=True)

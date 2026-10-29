@@ -1,0 +1,52 @@
+{
+  "metric": "boundary F-score, 2 px tolerance, thinned HED outlines, best threshold per method",
+  "columns": [
+    "noisy input (luma)",
+    "denoised",
+    "sobel on denoised",
+    "outline network",
+    "teacher (thinned)"
+  ],
+  "conditions": {
+    "f1_n2": {
+      "outline_net": {
+        "f": 0.6168625354766846,
+        "precision": 0.6053863763809204,
+        "recall": 0.6287822723388672,
+        "threshold": 0.7599999904632568
+      },
+      "sobel_output": {
+        "f": 0.5843181610107422,
+        "precision": 0.5529376268386841,
+        "recall": 0.6194748282432556,
+        "threshold": 0.14000001549720764
+      },
+      "sobel_input": {
+        "f": 0.3665097653865814,
+        "precision": 0.3058048188686371,
+        "recall": 0.45728492736816406,
+        "threshold": 0.7200000286102295
+      }
+    },
+    "f8_n2": {
+      "outline_net": {
+        "f": 0.6658601760864258,
+        "precision": 0.6589537262916565,
+        "recall": 0.6729128956794739,
+        "threshold": 0.800000011920929
+      },
+      "sobel_output": {
+        "f": 0.6319493651390076,
+        "precision": 0.6059707403182983,
+        "recall": 0.6602552533149719,
+        "threshold": 0.1600000113248825
+      },
+      "sobel_input": {
+        "f": 0.5390400886535645,
+        "precision": 0.5158783793449402,
+        "recall": 0.5643793344497681,
+        "threshold": 0.36000001430511475
+      }
+    }
+  }
+}

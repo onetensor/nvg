@@ -182,6 +182,40 @@
         "mae": 0.0001605954407750687,
         "maxError": 0.00029659271240234375
       }
+    },
+    "mono-w12-outlines": {
+      "available": true,
+      "url": "./models/sid-direct-mono-w12-outlines.onnx",
+      "sha256": "a40654afd6addb9cf4c59fcf6d2fae3f06cee25167b75a1b430187df1873187a",
+      "inputName": "input",
+      "outputName": "output",
+      "inputLayout": "NCHW",
+      "description": "The production width-12 mono model fused with a 48.6k-parameter object-outline network: outputs luminance and outline logits",
+      "name": "Mono SID 360p + outlines",
+      "inputChannels": 13,
+      "outputChannels": 2,
+      "width": 12,
+      "defaultResolution": "360p",
+      "fp16": {
+        "available": true,
+        "url": "./models/sid-direct-mono-w12-outlines-fp16.onnx",
+        "sha256": "904b573b2027c9b2ee786552e47f80d214754452a7f60e9b77f63bdd20679d81",
+        "mae": 0.0026163065247146733,
+        "maxError": 0.038140296936035156
+      },
+      "evaluation": {
+        "metric": "boundary F, 2 px tolerance, thinned HED outlines, best threshold per method, very dark test bursts",
+        "f1_n2": {
+          "outline_net": 0.617,
+          "sobel_output": 0.584,
+          "sobel_input": 0.367
+        },
+        "f8_n2": {
+          "outline_net": 0.666,
+          "sobel_output": 0.632,
+          "sobel_input": 0.539
+        }
+      }
     }
   },
   "adapter": {

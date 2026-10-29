@@ -12,7 +12,11 @@ export interface DisplayOptions {
   channels: 1 | 2 | 3;
   tint: MonoTint;
   outline: OutlineMode;
+  pop: PopLevel;
 }
+
+/** Contrast and local-contrast boost for luminance output. */
+export type PopLevel = 'off' | 'medium' | 'high';
 
 /** Object outlines: the model's learned plane, or Sobel on its output. */
 export type OutlineMode = 'off' | 'learned' | 'classic';
