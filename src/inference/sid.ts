@@ -5,7 +5,8 @@ import { GPUPreprocessor } from '../preprocessing/gpuPreprocess';
 import { TemporalAccumulator } from '../temporal';
 import { Canvas2DRenderer, WebGPURenderer } from '../renderer';
 import type {
-  AdapterMode, DisplayOptions, ModelGeometry, ModelMetadata, MonoTint, OutlineMode, PipelineResult, TemporalLevel,
+  AdapterMode, DisplayOptions, ModelGeometry, ModelMetadata, MonoTint, OutlineMode, PipelineResult, PopLevel,
+  TemporalLevel,
 } from '../types';
 
 export class SIDPipeline {
@@ -49,6 +50,7 @@ export class SIDPipeline {
   /** How a luminance-only model is shown. */
   tint: MonoTint = 'green';
   outline: OutlineMode = 'off';
+  pop: PopLevel = 'off';
   /** 1 for luminance-only direct models, 2 with an outline plane, otherwise 3. */
   get outputChannels(): 1 | 2 | 3 {
     return (this.metadata.sid as { outputChannels?: 1 | 2 | 3 }).outputChannels ?? 3;
@@ -128,7 +130,7 @@ export class SIDPipeline {
       const postStart = performance.now();
       // Learned outlines need the model's outline plane.
       const outline = this.outline === 'learned' && this.outputChannels !== 2 ? 'off' : this.outline;
-      const display: DisplayOptions = { channels: this.outputChannels, tint: this.tint, outline };
+      const display: DisplayOptions = { channels: this.outputChannels, tint: this.tint, outline, pop: this.pop };
       let outputStats;
       if (this.cpuDisplay) {
         // Pack and map the smaller RGBA8 image asynchronously. Inference does

@@ -7,7 +7,7 @@ import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
 import { isAppleMobileWebKit } from './platform';
 import { formatDebug, Profiler } from './profiler';
-import type { AdapterMode, DirectModelAsset, LuminanceStats, MonoTint, OutlineMode, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
+import type { AdapterMode, DirectModelAsset, LuminanceStats, MonoTint, OutlineMode, PopLevel, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
 import { applyView, controls, selectedValues, setStatus } from './ui/controls';
 
 const ui = controls();
@@ -72,6 +72,8 @@ function selectedMetadata(): Promise<ModelMetadata> {
 }
 
 const modelQuery = new URLSearchParams(window.location.search).get('model');
+/** Direct-model variant fused with the object-outline network. */
+const OUTLINE_VARIANT = 'mono-w12-outlines';
 
 /**
  * `?model=joint` selects the adapter pair, `?model=<variant>` a named direct
@@ -224,9 +226,14 @@ async function initializePipeline(): Promise<void> {
   // The tint only applies to luminance-only models; learned outlines need an outline plane.
   ui.tint.disabled = pipeline.outputChannels === 3;
   const learnedOutline = ui.outline.querySelector<HTMLOptionElement>('option[value="learned"]');
-  if (learnedOutline) learnedOutline.disabled = pipeline.outputChannels !== 2;
+  if (learnedOutline) learnedOutline.disabled = pipeline.outputChannels !== 2 && !metadata.directVariants?.[OUTLINE_VARIANT];
+  const outlineQuery = new URLSearchParams(window.location.search).get('outline');
+  if (outlineQuery === 'off' || outlineQuery === 'classic' || outlineQuery === 'learned') ui.outline.value = outlineQuery;
+  // A model with an outline plane shows learned outlines unless told otherwise.
+  else if (pipeline.outputChannels === 2) ui.outline.value = 'learned';
   if (pipeline.outputChannels !== 2 && ui.outline.value === 'learned') ui.outline.value = 'off';
   pipeline.outline = ui.outline.value as OutlineMode;
+  pipeline.pop = ui.pop.value as PopLevel;
   ui.model.disabled = true;
   if (useFixed360) {
     ui.resolution.disabled = true;
@@ -365,8 +372,21 @@ ui.temporal.addEventListener('change', () => pipeline?.resetTemporal());
 ui.tint.addEventListener('change', () => {
   if (pipeline) pipeline.tint = ui.tint.value as MonoTint;
 });
+ui.pop.addEventListener('change', () => {
+  if (pipeline) pipeline.pop = ui.pop.value as PopLevel;
+});
 ui.outline.addEventListener('change', () => {
-  if (pipeline) pipeline.outline = ui.outline.value as OutlineMode;
+  const mode = ui.outline.value as OutlineMode;
+  // Learned outlines need a model with an outline plane; switch to the
+  // outline variant (reloading keeps start-up simple) when the current one lacks it.
+  if (mode === 'learned' && pipeline && pipeline.outputChannels !== 2 && metadata?.directVariants?.[OUTLINE_VARIANT]) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('model', OUTLINE_VARIANT);
+    url.searchParams.set('outline', 'learned');
+    window.location.assign(url);
+    return;
+  }
+  if (pipeline) pipeline.outline = mode;
 });
 ui.capture.addEventListener('click', () => {
   if (capture.active || !ui.video.videoWidth) return;

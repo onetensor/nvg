@@ -24,6 +24,7 @@ export interface Controls {
   temporal: HTMLSelectElement;
   tint: HTMLSelectElement;
   outline: HTMLSelectElement;
+  pop: HTMLSelectElement;
   debug: HTMLInputElement;
   debugOverlay: HTMLElement;
   capture: HTMLButtonElement;
@@ -56,6 +57,7 @@ export function controls(): Controls {
     temporal: required('#temporal'),
     tint: required('#tint'),
     outline: required('#outline'),
+    pop: required('#pop'),
     debug: required('#debug'),
     debugOverlay: required('#debug-overlay'),
     capture: required('#capture'),

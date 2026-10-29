@@ -13,8 +13,10 @@ struct Params {
   // 0 = off, 1 = learned (outline plane), 2 = classic (Sobel on the output).
   outline_mode: u32,
   outline_strength: f32,
-  _pad0: u32,
-  _pad1: u32,
+  // "Pop" for luminance output: contrast around the midtones and local
+  // contrast against a 5x5 neighbourhood mean (0 = off).
+  pop_contrast: f32,
+  pop_local: f32,
 }
 
 // Green phosphor (P43-like), scaled so full luminance stays within range.
@@ -44,7 +46,9 @@ fn luminance_at(x: i32, y: i32) -> f32 {
 fn outline_at(x: i32, y: i32) -> f32 {
   if params.outline_mode == 1u && params.channels == 2u {
     let plane = params.full_width * params.full_height;
-    return 1.0 / (1.0 + exp(-image[plane + u32(y) * params.full_width + u32(x)]));
+    // Only confident outlines: the network's best F-score threshold is ~0.8,
+    // and uncertain regions sit near 0.5.
+    return smoothstep(0.65, 0.9, 1.0 / (1.0 + exp(-image[plane + u32(y) * params.full_width + u32(x)])));
   }
   if params.outline_mode == 2u {
     let gx = luminance_at(x + 1, y - 1) + 2.0 * luminance_at(x + 1, y) + luminance_at(x + 1, y + 1)
@@ -56,9 +60,22 @@ fn outline_at(x: i32, y: i32) -> f32 {
   return 0.0;
 }
 
+/// Luminance with "pop": local contrast against the 5x5 mean, then an
+/// S-shaped contrast boost around mid-grey.
+fn popped(x: i32, y: i32, value: f32) -> f32 {
+  if params.pop_contrast == 0.0 && params.pop_local == 0.0 { return value; }
+  var mean = 0.0;
+  for (var dy = -2; dy <= 2; dy += 1) {
+    for (var dx = -2; dx <= 2; dx += 1) { mean += luminance_at(x + dx, y + dy); }
+  }
+  mean /= 25.0;
+  let local = value + params.pop_local * (value - mean);
+  return clamp(0.5 + (local - 0.5) * (1.0 + params.pop_contrast), 0.0, 1.0);
+}
+
 fn display_color(x: i32, y: i32) -> vec3f {
   let index = u32(y) * params.full_width + u32(x);
-  var color = mono_color(image[index]);
+  var color = mono_color(popped(x, y, image[index]));
   if params.channels == 3u {
     let plane = params.full_width * params.full_height;
     color = vec3f(image[index], image[plane + index], image[2u * plane + index]);

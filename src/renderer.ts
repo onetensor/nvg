@@ -2,8 +2,10 @@ import postprocessShader from '../shaders/postprocess.wgsl?raw';
 import readbackShader from '../shaders/readback.wgsl?raw';
 import type { DisplayOptions, ModelGeometry, OutputStats, PresentationStats } from './types';
 
-const RGB_DISPLAY: DisplayOptions = { channels: 3, tint: 'gray', outline: 'off' };
+const RGB_DISPLAY: DisplayOptions = { channels: 3, tint: 'gray', outline: 'off', pop: 'off' };
 const OUTLINE_MODES = { off: 0, learned: 1, classic: 2 } as const;
+/** [contrast, local contrast] per pop level. */
+const POP: Record<DisplayOptions['pop'], [number, number]> = { off: [0, 0], medium: [0.25, 0.8], high: [0.5, 1.6] };
 
 /** The 48-byte display uniform shared by readback.wgsl and postprocess.wgsl. */
 function displayParams(geometry: ModelGeometry, display: DisplayOptions): ArrayBuffer {
@@ -13,6 +15,10 @@ function displayParams(geometry: ModelGeometry, display: DisplayOptions): ArrayB
     display.channels, display.tint === 'green' ? 1 : 0, OUTLINE_MODES[display.outline]]
     .forEach((value, index) => view.setUint32(index * 4, value, true));
   view.setFloat32(36, 1.0, true);
+  // Pop applies to luminance output only.
+  const [contrast, local] = display.channels === 3 ? [0, 0] : POP[display.pop];
+  view.setFloat32(40, contrast, true);
+  view.setFloat32(44, local, true);
   return values;
 }
 
