@@ -70,42 +70,48 @@
   },
   "sidDirect": {
     "available": true,
-    "url": "./models/sid-direct-w32.onnx",
-    "sha256": "e6c5b8ba4413b806d847abd6c91b27adf042bd110f46606b6f7da11f74c190f5",
+    "url": "./models/sid-direct-mono13.onnx",
+    "sha256": "c2b4fd7d457d4e89d5163aacf7f5723d5afebbb2a29ec46a7ce7ba5b94e5996c",
     "inputName": "input",
     "outputName": "output",
     "inputLayout": "NCHW",
-    "description": "Adapter-free SID taking 2x2-packed linear RGB, trained on simulated iPhone video (warm-started from the joint SID)",
-    "inputChannels": 12,
+    "description": "Luminance-only restoration SID: 12 packed linear RGB planes plus a 1/sqrt(frames averaged) noise-level plane in, the noise-free phone image's luma out; trained on accumulated SID bursts through a simulated iPhone pipeline",
+    "inputChannels": 13,
+    "outputChannels": 1,
     "width": 32,
     "fp16": {
       "available": true,
-      "url": "./models/sid-direct-w32-fp16.onnx",
-      "sha256": "fdb09a7f1bee91208295c20c12714c6e25e818e7816ea68862ab9c4402d18fd5",
-      "mae": 6.761904061628836e-05,
-      "maxError": 0.00025069713592529297
+      "url": "./models/sid-direct-mono13-fp16.onnx",
+      "sha256": "425dc295ff05218fea863d15edce77e3f05d8d5f1a61d5e6da3574f7b529ff6f",
+      "mae": 0.0001363032815788756,
+      "maxError": 0.0003333091735839844
     },
     "evaluation": {
-      "phone-ds2": {
-        "samples": 100,
-        "psnr": 21.5287,
-        "ssim": 0.6957,
-        "deployedJointPsnr": 12.8516,
-        "deployedJointSsim": 0.3667
+      "note": "Held-out SID test bursts through the simulated iPhone pipeline, scored in luma against the noise-free phone rendering; 'fit' is PSNR after a per-image gain+offset (fair to models trained for SID's brightness convention). n2 = 2 photons at the median, very dark.",
+      "samples": 100,
+      "f1_n2": {
+        "psnr": 21.41,
+        "ssim": 0.682,
+        "lpips": 0.339,
+        "fitPsnr": 26.05,
+        "previousDirect": {
+          "psnr": 13.83,
+          "ssim": 0.481,
+          "lpips": 0.504,
+          "fitPsnr": 23.64
+        }
       },
-      "phone-ds4": {
-        "samples": 100,
-        "psnr": 21.2144,
-        "ssim": 0.7049,
-        "deployedJointPsnr": 12.9114,
-        "deployedJointSsim": 0.3684
-      },
-      "legacy": {
-        "samples": 100,
-        "psnr": 19.5942,
-        "ssim": 0.6486,
-        "deployedJointPsnr": 19.0805,
-        "deployedJointSsim": 0.6019
+      "f8_n2": {
+        "psnr": 22.69,
+        "ssim": 0.747,
+        "lpips": 0.281,
+        "fitPsnr": 27.87,
+        "previousDirect": {
+          "psnr": 15.79,
+          "ssim": 0.574,
+          "lpips": 0.438,
+          "fitPsnr": 24.36
+        }
       }
     }
   },

@@ -68,16 +68,27 @@
               <option value="quality">Max quality</option>
             </select>
           </label>
+          <label>Mono display
+            <select id="tint">
+              <option value="green" selected>Green phosphor</option>
+              <option value="gray">Grayscale</option>
+            </select>
+          </label>
           <label>Temporal
             <select id="temporal">
               <option value="off">Off</option>
-              <option value="low" selected>2 frames</option>
-              <option value="medium">4 frames</option>
+              <option value="low">2 frames</option>
+              <option value="medium" selected>4 frames</option>
               <option value="high">8 frames</option>
+              <option value="hold">Hold still · 32</option>
             </select>
           </label>
           <label class="debug-check"><input id="debug" type="checkbox" /> Debug overlay</label>
-          <button id="capture" class="capture-button" type="button" title="Save 16 consecutive raw camera frames for offline analysis">Capture frames</button>
+          <div class="capture-group">
+            <button id="capture" class="capture-button" type="button" title="Keep 16 consecutive raw camera frames on this device for offline analysis">Capture</button>
+            <button id="capture-export" class="capture-button" type="button" hidden>Export</button>
+            <button id="capture-clear" class="capture-button" type="button" hidden>Clear</button>
+          </div>
         </div>
         <div class="gain-control">
           <div class="gain-title">

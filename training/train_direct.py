@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from training.dataset import AdapterDataset
 from training.phone_sim import BurstDataset, PhoneSimDataset, collate_list, degrade_batch, degrade_bursts
 from training.losses import charbonnier, psnr, ssim
-from training.sid_model import SIDUNet, add_noise_level_input, direct_from_bayer, direct_input, load_sid
+from training.sid_model import SIDUNet, add_noise_level_input, direct_from_bayer, direct_input, load_sid, luma, to_mono
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +31,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--in-channels", type=int, choices=(12, 13), default=12,
                         help="13 adds a 1/sqrt(frames averaged) noise-level plane")
     parser.add_argument("--lpips-weight", type=float, default=0.0)
+    parser.add_argument("--mono", action="store_true",
+                        help="Train a luminance-only output (warm-started from an RGB model's luma)")
+    parser.add_argument("--target", choices=("phone", "sid"), default="phone",
+                        help="burst protocol: restore the clean phone rendering, or the SID long exposure")
     parser.add_argument("--width", type=int, default=32)
     parser.add_argument("--teacher", help="Direct (12-channel) checkpoint to distill from")
     parser.add_argument("--teacher-weight", type=float, default=0.5)
@@ -65,11 +69,13 @@ def build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
         source = load_sid(args.init_direct)
         if source.in_channels == 12 and args.in_channels == 13:
             source = add_noise_level_input(source)
+        if args.mono and source.out_channels == 12:
+            source = to_mono(source)
         if source.in_channels != args.in_channels or source.width != args.width:
             raise ValueError("--init-direct does not match --in-channels/--width")
         return source.to(device)
-    if args.in_channels != 12:
-        raise ValueError("A 13-channel model needs --init-direct")
+    if args.in_channels != 12 or args.mono:
+        raise ValueError("13-channel and mono models need --init-direct")
     if args.init_sid:
         source = load_sid(args.init_sid)
         if source.width != args.width:
@@ -90,13 +96,15 @@ def batch_preparer(args: argparse.Namespace, device: torch.device) -> Prepare:
     def prepare(batch, augment: bool, extra_noise: float | None = None) -> Prepared:
         counts = None
         if args.protocol == "burst":
-            inputs, targets, gain, counts = degrade_bursts(batch, device, augment, extra_noise)
+            inputs, targets, gain, counts = degrade_bursts(batch, device, augment, extra_noise, target=args.target)
         elif args.protocol == "phone":
             inputs, targets, gain = degrade_batch(batch, device, args.output_size, augment)
         else:
             inputs = batch["input"].to(device, non_blocking=True)
             targets = batch["target"].to(device, non_blocking=True)
             gain = batch["gain"].to(device, non_blocking=True)
+        if args.mono:
+            targets = luma(targets)
         return inputs, targets, gain[:, None, None, None], counts
     return prepare
 
@@ -217,9 +225,11 @@ def main() -> None:
             {
                 "state_dict": model.state_dict(),
                 "in_channels": model.in_channels,
+                "out_channels": model.out_channels,
                 "width": args.width,
                 "input": "packed_linear_rgb",
                 "protocol": args.protocol,
+                "target": args.target if args.protocol == "burst" else "sid",
                 "parameter_count": parameter_count,
                 "step": step,
                 "metrics": metrics,
@@ -257,7 +267,9 @@ def main() -> None:
             else:
                 teacher_loss = target_loss.new_zeros(())
         perceptual_loss = (
-            perceptual(prediction.clamp(0, 1) * 2 - 1, targets * 2 - 1).mean()
+            # LPIPS expects three channels; a mono image is replicated.
+            perceptual((prediction.clamp(0, 1) * 2 - 1).expand(-1, 3, -1, -1),
+                       (targets * 2 - 1).expand(-1, 3, -1, -1)).mean()
             if perceptual is not None else target_loss.new_zeros(())
         )
         loss = target_loss + args.teacher_weight * teacher_loss + args.lpips_weight * perceptual_loss

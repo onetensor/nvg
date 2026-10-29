@@ -1,12 +1,13 @@
 import temporalShader from '../shaders/temporal.wgsl?raw';
 import type { TemporalLevel } from './types';
 
-/** Maximum frames averaged per static pixel. */
-const MAX_FRAMES: Record<TemporalLevel, number> = { off: 1, low: 2, medium: 4, high: 8 };
-// Thresholds on |sqrt(now) - sqrt(history)|: below LOW a pixel is static,
-// above HIGH it restarts from the current frame.
-const MOTION_LOW = 0.02;
-const MOTION_HIGH = 0.06;
+/** Maximum frames averaged per static pixel; `hold` is for a steadied phone. */
+const MAX_FRAMES: Record<TemporalLevel, number> = { off: 1, low: 2, medium: 4, high: 8, hold: 32 };
+// Thresholds on the neighbourhood-averaged signed change in sqrt space (see
+// the `motion` pass): below LOW a cell is static, above HIGH it restarts from
+// the current frame. Averaging ~100 differences keeps noise far below LOW.
+const MOTION_LOW = 0.012;
+const MOTION_HIGH = 0.04;
 
 /**
  * Input-side temporal denoising. Averaging the linear camera tensor before the
@@ -15,19 +16,28 @@ const MOTION_HIGH = 0.06;
  */
 export class TemporalAccumulator {
   private readonly pipeline: GPUComputePipeline;
+  private readonly motionPipeline: GPUComputePipeline;
   private readonly params: GPUBuffer;
   private history: GPUBuffer | null = null;
   private frames: GPUBuffer | null = null;
+  private motion: GPUBuffer | null = null;
   private bindGroup: GPUBindGroup | null = null;
+  private motionBindGroup: GPUBindGroup | null = null;
   private source: GPUBuffer | null = null;
   private key = '';
   private initialized = false;
 
   constructor(private readonly device: GPUDevice) {
+    const module = device.createShaderModule({ label: 'input temporal accumulation', code: temporalShader });
     this.pipeline = device.createComputePipeline({
       label: 'input temporal accumulation',
       layout: 'auto',
-      compute: { module: device.createShaderModule({ code: temporalShader }), entryPoint: 'main' },
+      compute: { module, entryPoint: 'main' },
+    });
+    this.motionPipeline = device.createComputePipeline({
+      label: 'input temporal motion score',
+      layout: 'auto',
+      compute: { module, entryPoint: 'motion' },
     });
     this.params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
@@ -55,10 +65,19 @@ export class TemporalAccumulator {
     view.setFloat32(16, MAX_FRAMES[level], true);
     view.setFloat32(20, MOTION_LOW, true);
     view.setFloat32(24, MOTION_HIGH, true);
+    view.setUint32(28, dims[3]!, true);
     this.device.queue.writeBuffer(this.params, 0, values);
 
     const encoder = this.device.createCommandEncoder({ label: 'input temporal accumulation encoder' });
-    const pass = encoder.beginComputePass();
+    if (this.initialized) {
+      // Separate passes: the score reads neighbours that pass 2 overwrites.
+      const scoring = encoder.beginComputePass({ label: 'input temporal motion score' });
+      scoring.setPipeline(this.motionPipeline);
+      scoring.setBindGroup(0, this.motionBindGroup!);
+      scoring.dispatchWorkgroups(Math.ceil(plane / 256));
+      scoring.end();
+    }
+    const pass = encoder.beginComputePass({ label: 'input temporal accumulation' });
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup!);
     pass.dispatchWorkgroups(Math.ceil(plane / 256));
@@ -74,8 +93,10 @@ export class TemporalAccumulator {
   dispose(): void {
     this.history?.destroy();
     this.frames?.destroy();
+    this.motion?.destroy();
     this.params.destroy();
     this.bindGroup = null;
+    this.motionBindGroup = null;
     this.source = null;
   }
 
@@ -84,6 +105,12 @@ export class TemporalAccumulator {
     if (this.key !== key) {
       this.history?.destroy();
       this.frames?.destroy();
+      this.motion?.destroy();
+      this.motion = this.device.createBuffer({
+        label: 'input temporal motion scores',
+        size: Math.ceil(plane * 4 / 16) * 16,
+        usage: GPUBufferUsage.STORAGE,
+      });
       this.history = this.device.createBuffer({
         label: 'input temporal history',
         size: Math.ceil(channels * plane * 4 / 16) * 16,
@@ -107,6 +134,16 @@ export class TemporalAccumulator {
           { binding: 1, resource: { buffer: this.history! } },
           { binding: 2, resource: { buffer: this.frames! } },
           { binding: 3, resource: { buffer: this.params } },
+          { binding: 4, resource: { buffer: this.motion! } },
+        ],
+      });
+      this.motionBindGroup = this.device.createBindGroup({
+        layout: this.motionPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: frame } },
+          { binding: 1, resource: { buffer: this.history! } },
+          { binding: 3, resource: { buffer: this.params } },
+          { binding: 4, resource: { buffer: this.motion! } },
         ],
       });
     }

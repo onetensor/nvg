@@ -22,9 +22,12 @@ export interface Controls {
   resolution: HTMLSelectElement;
   target: HTMLSelectElement;
   temporal: HTMLSelectElement;
+  tint: HTMLSelectElement;
   debug: HTMLInputElement;
   debugOverlay: HTMLElement;
   capture: HTMLButtonElement;
+  captureExport: HTMLButtonElement;
+  captureClear: HTMLButtonElement;
   autoGain: HTMLInputElement;
   gain: HTMLInputElement;
   gainValue: HTMLOutputElement;
@@ -50,9 +53,12 @@ export function controls(): Controls {
     resolution: required('#resolution'),
     target: required('#target-fps'),
     temporal: required('#temporal'),
+    tint: required('#tint'),
     debug: required('#debug'),
     debugOverlay: required('#debug-overlay'),
     capture: required('#capture'),
+    captureExport: required('#capture-export'),
+    captureClear: required('#capture-clear'),
     autoGain: required('#auto-gain'),
     gain: required('#gain'),
     gainValue: required('#gain-value'),

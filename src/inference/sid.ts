@@ -4,7 +4,7 @@ import { PseudoRawGain } from './adapter';
 import { GPUPreprocessor } from '../preprocessing/gpuPreprocess';
 import { TemporalAccumulator } from '../temporal';
 import { Canvas2DRenderer, WebGPURenderer } from '../renderer';
-import type { AdapterMode, ModelGeometry, ModelMetadata, PipelineResult, TemporalLevel } from '../types';
+import type { AdapterMode, DisplayOptions, ModelGeometry, ModelMetadata, MonoTint, PipelineResult, TemporalLevel } from '../types';
 
 export class SIDPipeline {
   private readonly sid: ONNXWebGPUBackend;
@@ -44,6 +44,12 @@ export class SIDPipeline {
   get backendName(): string { return this.sid.name; }
   get fp16Available(): boolean { return this.device?.features.has('shader-f16') ?? false; }
   get learnedAdapterAvailable(): boolean { return this.adapter !== null; }
+  /** How a luminance-only model is shown. */
+  tint: MonoTint = 'green';
+  /** 1 for luminance-only direct models, otherwise 3. */
+  get outputChannels(): 1 | 3 {
+    return (this.metadata.sid as { outputChannels?: 1 | 3 }).outputChannels ?? 3;
+  }
   /** 12 (packed RGB) or 13 (plus noise level) for direct models. */
   private get directChannels(): number {
     return (this.metadata.sid as { inputChannels?: number }).inputChannels ?? 12;
@@ -111,19 +117,20 @@ export class SIDPipeline {
       sidOutput = await this.sid.run(sidInput);
       const sidMs = performance.now() - sidStart;
       if (sidOutput.location !== 'gpu-buffer') throw new Error('SID output is not GPU-resident.');
-      const expected = [1, 3, geometry.paddedHeight, geometry.paddedWidth];
+      const expected = [1, this.outputChannels, geometry.paddedHeight, geometry.paddedWidth];
       if (sidOutput.dims.length !== expected.length || sidOutput.dims.some((value, i) => value !== expected[i])) {
         throw new Error(`Unexpected SID output shape: ${sidOutput.dims.join('×')}`);
       }
 
       const postStart = performance.now();
+      const display: DisplayOptions = { channels: this.outputChannels, tint: this.tint };
       let outputStats;
       if (this.cpuDisplay) {
         // Pack and map the smaller RGBA8 image asynchronously. Inference does
         // not wait for Safari's slow GPU-to-CPU presentation boundary.
-        outputStats = this.canvas2dRenderer.render(sidOutput.gpuBuffer, geometry);
+        outputStats = this.canvas2dRenderer.render(sidOutput.gpuBuffer, geometry, display);
       } else {
-        this.renderer.render(sidOutput.gpuBuffer, geometry);
+        this.renderer.render(sidOutput.gpuBuffer, geometry, display);
         await this.device.queue.onSubmittedWorkDone();
       }
       const postprocess = performance.now() - postStart;

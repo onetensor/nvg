@@ -163,6 +163,113 @@ expands to 72.5 GB, so 100 GB was too small while both exist) and pod `x2h7ttky3
 `DATA_DIR` did not exist; it now creates it first. The user asked that no
 training run on their local machine.
 
+## Multi-frame quality pass (in progress)
+
+User feedback on `7b2fe45` (direct w32): "definitely much better, but still not
+great in some low light circumstances, very difficult to make out anything";
+360p speed is acceptable. Priority: significantly better quality for this task.
+
+- **Literature takeaways.** Real-time systems for this problem get most of
+  their quality from multi-frame merging with per-pixel weights (Google HDR+
+  and Night Sight align-and-merge; Huawei EMVD, CVPR 2021, recurrent learned
+  fusion at ~5 GFLOPs on mobile) and from realistic noise modeling
+  (physics-based / shot-noise augmentation, e.g. "Learnability Enhancement for
+  Low-light Raw Denoising"). FFDNet-style noise-level maps are the standard way
+  to handle spatially varying noise. BVI-RLV (2024) is the closest real paired
+  dataset (8-bit H.264 camera video at 10–20% light, ISO 800), but it is much
+  brighter than the user's scenes; held for a later phase.
+- **Bursts.** Each Sony scene has 8–22 independent tripod short exposures.
+  `training/build_burst_dataset.py` caches aligned crops of up to 8 of them
+  per crop (train 161 scenes × 16 crops, val 20 × 2, test 50 × 2; 36 GB at
+  `/root/nvg-bursts` on the pod's container disk — lost if the pod stops).
+- **Simulation v2 (`phone_sim.py`).** One ISP parameter set per burst; per
+  frame noise and compression; added shot/read noise (60% of samples, 1.5–80
+  photons at the median) to cover dimmer captures than the Sony data; chroma
+  NR, sharpening and a shadow-lift curve; `emulate_accumulation` mirrors
+  `src/temporal.ts` (cap 1–16, motion-reset rectangles) and returns per-cell
+  frame counts. Verified: 8-frame average noise 0.0179 vs 0.0177 theoretical.
+- **13-channel model.** Input = 12 packed planes + `1/sqrt(frames averaged)`;
+  `add_noise_level_input` warm-starts from w32 with a zero-weight plane (exact
+  reproduction at step 0). Runtime support is deployed (temporal shader writes
+  the plane, gain pass amplifies only 12 planes); it activates when
+  `sidDirect.inputChannels` is 13.
+- **Runs.** `burst13` and `burst13-lpips` (LPIPS-VGG weight 0.1), 30k steps,
+  lr 3e-5, launched together; validation `f1` (1 frame, no extra noise) and
+  `f4n6` (4 frames, 6 photons). `training/evaluate_burst.py` scores PSNR/SSIM/
+  LPIPS over six frame/noise conditions and saves comparison strips
+  (input×gain | models… | target).
+- **Real data.** "Capture frames" in the controls panel saves 16 consecutive
+  camera frames (upright 8-bit sRGB, native size) plus settings as a `.tar`;
+  verified frames are 33.3 ms apart. Ask the user for captures of failing
+  scenes to evaluate on and to calibrate the noise simulation.
+- **Pushing.** Plain `git push` began failing authentication; use
+  `git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin master`.
+- **Next candidates.** Global alignment before accumulation (handheld shake
+  resets accumulation at every edge today); learned recurrent fusion
+  (EMVD-style) trained on bursts with synthetic motion.
+
+### Outcome: mono restoration model (production)
+
+- **burst13** (SID target, 13 channels) beat the deployed w32 under
+  accumulation (8 frames, very dark: 18.93 → 21.43 dB; LPIPS 0.444 → 0.386) but
+  not on single frames. The deployed w32 got *worse* with more averaged frames.
+- **Diagnosis.** PSNR after a per-image 3×3+offset color fit to the target was
+  ~6–7 dB higher than plain PSNR for every model: the dominant error was
+  global color/tone, i.e. the model hedging over the simulation's random,
+  unidentifiable ISP (white balance, matrix, tone curve, black crush) and SID's
+  per-scene long-exposure brightness. Visible as a gray, desaturated veil.
+  Auto-levels on the output made PSNR worse (not a black-point offset).
+- **Restoration target** (`--target phone`, default for `--protocol burst`):
+  the long exposure through the same phone exposure and color/tone ISP as the
+  current frame, times the runtime gain, without noise, NR blur, sharpening,
+  quantization or JPEG. Identity check 55.7 dB (8-bit limited). The model is
+  now a pure denoiser/restorer; brightness follows the gain (manual gain
+  slider = brightness). restore13 / restore13-lpips: ~21.5 dB against this
+  target vs 12.8–15.5 for the raw input.
+- **Mono.** The user does not need color ("classic nvg green-scale is fine";
+  priority is reconstruction and noise). `to_mono` converts an RGB head to an
+  exact luma head (max diff 2.4e-7); `--mono` trains on luma targets;
+  `evaluate_burst --luma` scores in luma. mono13 (from restore13-lpips, LPIPS
+  0.1, sequences up to 32 frames) on 100 held-out test bursts, luma,
+  very dark (n2):
+
+  | | previous direct w32 | mono13 |
+  |---|---|---|
+  | 1 frame, PSNR after gain+offset fit | 23.64 | **26.05** |
+  | 1 frame, LPIPS | 0.504 | **0.339** |
+  | 8 frames, PSNR after fit | 24.36 | **27.87** |
+  | 8 frames, LPIPS | 0.438 | **0.281** |
+
+  (Plain PSNR 13.8 → 21.4 and 15.8 → 22.7 favours the new model because w32 was
+  trained for SID brightness; use the fit numbers.) Remaining failures are
+  information-limited: where the simulated ISP crushes shadows, the clean
+  target is black too.
+- **Runtime.** `metadata.sidDirect` is now mono13 (`inputChannels` 13,
+  `outputChannels` 1). The readback/postprocess shaders render one plane as
+  green phosphor (default) or grayscale ("Mono display" control). The temporal
+  accumulator now runs a separate `motion` pass: the signed sqrt-space change
+  averaged over all channels of the 3×3 cell neighbourhood (GPU test: static
+  100%-noise frames reach the 32 cap with noise std 0.00175 → 0.00027; a
+  moving block resets locally). Thresholds 0.012/0.04. Default temporal is now
+  4 frames; "Hold still · 32" exists for a steadied phone (it averages away
+  faint moving objects by design).
+- **Orientation calibration** previously treated contrast < 0.025 as
+  inconclusive; a dark room is ~0.010, so it fell back to Safari's (wrong)
+  metadata. Threshold is now 0.003 — both grids come from the same frame, so
+  even noise is a valid fingerprint.
+- **Captures** are kept in IndexedDB (memory fallback) and exported together
+  via the share sheet (download fallback); the user found per-capture
+  downloads annoying and does not want to build a dataset.
+- **RunPod.** Pod `x2h7ttky31ropk`'s GPU failed at the host level after
+  training (`cuInit` → 999 while `nvidia-smi` worked); evaluation and export
+  ran on its CPUs. A local watchdog (scratchpad `pod-watchdog.sh`) deletes the
+  pod at a 4-hour wall-clock deadline as the user requested; the pod-scoped
+  API key inside the pod was not usable (permission policy). Checkpoints live on
+  network volume `15zybm4owd` under `/workspace/nvg-direct-run/`
+  (w32, w16, burst13, burst13-lpips, restore13, restore13-lpips, mono13).
+  Bursts were on the pod's container disk; rebuild with
+  `training/build_burst_dataset.py` (~5 minutes with 13 processes).
+
 ## What the user wants
 
 The user wants the best practical low-light enhancement possible in an iPhone
