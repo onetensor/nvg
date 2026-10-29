@@ -305,7 +305,27 @@ for higher resolution at the same FPS; then asked for object outlines.
   (the bar the learned head must beat). Runtime: an `Outlines` control (off /
   learned / classic Sobel on the output) in both display shaders; learned is
   disabled unless `outputChannels` is 2.
-- **RunPod.** Pod `ovw2rxpgw4cg4r` (RTX PRO 6000) with volume `15zybm4owd`.
+- **Outcome (`67c6492`, live).** w12 at 360p is the production model
+  (`sidDirect`, `defaultResolution` 360p, 2.2 MB FP16); `?model=mono-w32`
+  (180p) and `?model=mono-w8` (360p, faster) are variants. Final
+  `evaluate_resolution`, very dark, scored at 360p: w32@180p 19.93 dB / LPIPS
+  0.497 (1 frame), 21.41 / 0.466 (8 frames); w12@360p 20.99 / 0.383 and
+  22.33 / 0.327; w8@360p 20.59 / 0.432 and 21.91 / 0.367. Local timing put
+  w12@360p at ~1.1x the cost of w32@180p; the phone's FPS is unconfirmed.
+  The app ran end to end at 360p in headless Chrome (30 fps, camera-limited).
+- **Learned outlines did not beat classic edges** (`mono-w12-outline`, 15k
+  steps, outline weight 0.3; image cost ~0.05–0.2 dB). Best-threshold F
+  against HED outlines (`models/evaluation/outlines-learned-vs-sobel.json`):
+  learned 0.374 / 0.401 (1 / 8 frames) vs Sobel on the denoised output
+  0.397 / 0.444 (Sobel on the noisy input 0.184 / 0.327). The 1×1 head on
+  width-12 features yields thick, soft outlines and a uniform "maybe" where the
+  teacher draws edges the dark input does not contain. Not shipped; the
+  "Classic edges" display mode (Sobel on the output) is the outline feature,
+  default Off. A better attempt would need a dedicated outline decoder at
+  output resolution and thinned teacher targets. Note `direct-best.pt` is
+  chosen by image metrics only, so outline runs must use `direct-latest.pt`.
+- **RunPod.** Pod `ovw2rxpgw4cg4r` (RTX PRO 6000) with volume `15zybm4owd`;
+  deleted after training (and its systemd cap timer stopped).
   Detached shell watchdogs stopped surviving in this environment, so the cost
   cap is a systemd user timer: `systemctl --user list-timers nvg-pod-cap.timer`
   (deletes the pod at 19:30 EDT 2026-10-29). Runs: `mono-w12`, `mono-w8`
