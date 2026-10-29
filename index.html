@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#050606" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>SID Live — See in the Dark</title>
+  </head>
+  <body>
+    <main id="app">
+      <section id="stage" class="stage" aria-label="Camera view">
+        <video id="camera" playsinline muted aria-label="Original camera"></video>
+        <canvas id="enhanced" aria-label="SID enhanced camera"></canvas>
+        <div id="split-divider" class="split-divider" hidden></div>
+        <span id="original-label" class="view-label original-label" hidden>Original</span>
+        <span id="enhanced-label" class="view-label enhanced-label" hidden>Enhanced</span>
+        <div class="topbar">
+          <div class="brand"><span class="brand-dot"></span>SID Live</div>
+          <div id="status" class="status" role="status">Ready</div>
+        </div>
+        <div id="empty-state" class="empty-state">
+          <div class="aperture" aria-hidden="true"></div>
+          <h1>Learning to See<br />in the Dark</h1>
+          <p>Private, on-device low-light enhancement.<br />Frames never leave this phone.</p>
+          <button id="start-camera" class="primary-button" type="button">Start rear camera</button>
+          <p id="requirements" class="requirements"></p>
+        </div>
+        <pre id="debug-overlay" class="debug-overlay" hidden></pre>
+      </section>
+
+      <button id="controls-toggle" class="controls-toggle" type="button" aria-expanded="false" aria-controls="control-panel">
+        Controls
+      </button>
+      <aside id="control-panel" class="control-panel" data-collapsed="true">
+        <div class="control-grid">
+          <label>View
+            <select id="view-mode">
+              <option value="enhanced">Enhanced</option>
+              <option value="original">Original</option>
+              <option value="split">Split comparison</option>
+            </select>
+          </label>
+          <label>SID model
+            <select id="model-variant">
+              <option value="joint" selected>Joint tuned (quality)</option>
+              <option value="original">Original pretrained</option>
+            </select>
+          </label>
+          <label>Adapter
+            <select id="adapter-mode">
+              <option value="manual">Manual Bayer</option>
+              <option value="learned" selected>Learned pseudo-RAW</option>
+            </select>
+          </label>
+          <label>Resolution
+            <select id="resolution">
+              <option value="auto">Auto</option>
+              <option value="360p" selected>360p · fastest</option>
+              <option value="540p">540p</option>
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </label>
+          <label>Target
+            <select id="target-fps">
+              <option value="30">30 FPS</option>
+              <option value="15">15 FPS</option>
+              <option value="quality">Max quality</option>
+            </select>
+          </label>
+          <label>Temporal
+            <select id="temporal">
+              <option value="off">Off</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label class="debug-check"><input id="debug" type="checkbox" /> Debug overlay</label>
+        </div>
+        <div class="gain-control">
+          <div class="gain-title">
+            <label class="auto-check"><input id="auto-gain" type="checkbox" checked /> Auto gain</label>
+            <output id="gain-value" for="gain">30×</output>
+          </div>
+          <input id="gain" type="range" min="0" max="1000" step="1" value="596" aria-label="SID gain" />
+          <div class="range-labels"><span>1×</span><span>10×</span><span>30×</span><span>100×</span><span>300×</span></div>
+        </div>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

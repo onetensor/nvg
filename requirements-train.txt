@@ -1,0 +1,12 @@
+torch>=2.8,<2.10
+torchvision>=0.23
+numpy>=2.0
+pillow>=11
+rawpy>=0.25
+onnx>=1.19
+onnxconverter-common>=1.16
+onnxruntime-gpu>=1.23
+tensorflow-cpu>=2.19,<2.22
+tf_slim>=1.1
+huggingface_hub>=1.1
+safetensors>=0.6

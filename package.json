@@ -1,0 +1,25 @@
+{
+  "name": "sid-live-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node tools/sync-web-models.mjs",
+    "dev": "vite --host 0.0.0.0",
+    "prebuild": "node tools/sync-web-models.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.23.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "@webgpu/types": "^0.1.66",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "sid": {
+    "available": true,
+    "url": "./models/sid-sony.onnx",
+    "sha256": "d4c76a8ca9bd5d8cf66702d05b71ddc98ea702b00b902b91dfa42a983f88ae81",
+    "inputName": "input",
+    "outputName": "output",
+    "inputLayout": "NCHW",
+    "description": "Official Sony SID checkpoint converted to dynamic-shape ONNX",
+    "fp16": {
+      "available": true,
+      "url": "./models/sid-sony-fp16.onnx",
+      "sha256": "a2784e0ed40e1a68485d8eb660c223513ff8dd3f67908a3cb779cd959bcd27ca",
+      "mae": 2.3670050338135223e-05,
+      "maxError": 0.00017659366130828857
+    },
+    "fixed360p": {
+      "available": true,
+      "url": "./models/sid-sony-360p.onnx",
+      "sha256": "402010d3f020dc67f63b8e4988b22b722644fc9346e9c6fdc32d147b936e1a0c",
+      "outputShape": [
+        1,
+        3,
+        384,
+        640
+      ],
+      "fp16": {
+        "available": true,
+        "url": "./models/sid-sony-360p-fp16.onnx",
+        "sha256": "8879a65141537c7ce4da61375db3cae767ffef01ce228da0432482de85b1dc48",
+        "mae": 7.282925948351881e-05,
+        "maxError": 0.0003247857093811035
+      }
+    }
+  },
+  "sidJoint": {
+    "available": true,
+    "url": "./models/sid-sony-joint.onnx",
+    "sha256": "3fe1311edbe54e1d9df1ce6b1dd6a4b602e181b219fba1f6a2fe4020ebf92d2b",
+    "inputName": "input",
+    "outputName": "output",
+    "inputLayout": "NCHW",
+    "description": "Sony SID U-Net jointly fine-tuned with the pseudo-RAW adapter",
+    "fp16": {
+      "available": true,
+      "url": "./models/sid-sony-joint-fp16.onnx",
+      "sha256": "28bedc37f4b53152414017e5822b2bbae56772bd7f9bb8fd9e7b962b9c9e437a",
+      "mae": 7.768323045335516e-05,
+      "maxError": 0.00023552775382995605
+    },
+    "fixed360p": {
+      "available": true,
+      "url": "./models/sid-sony-joint-360p.onnx",
+      "sha256": "e3f82f9b2c6a4eb0d41946a8db8cda4f89779bb356a8d2f2024e434c90e44fac",
+      "outputShape": [
+        1,
+        3,
+        384,
+        640
+      ],
+      "fp16": {
+        "available": true,
+        "url": "./models/sid-sony-joint-360p-fp16.onnx",
+        "sha256": "dc5984e66a5edea966da07c1b74603c476842a88eb46b40508eab2d9ce1c37a5",
+        "mae": 7.972851219367133e-05,
+        "maxError": 0.00028058886528015137
+      }
+    }
+  },
+  "adapter": {
+    "available": true,
+    "url": "./models/pseudo-raw-adapter.onnx",
+    "sha256": "826d95cdeec0670a17bd74de9f400bd68fbcf606c516c89492f7b89bfccfa1ed",
+    "inputName": "input",
+    "outputName": "pseudo_raw",
+    "inputLayout": "NCHW",
+    "description": "Tiny linear-RGB to unamplified pseudo-RAW adapter",
+    "parameterCount": 265732,
+    "fp16": {
+      "available": true,
+      "url": "./models/pseudo-raw-adapter-fp16.onnx",
+      "sha256": "1ee7901b82df61b1e4fec89c474c767de2ce38938ffbf53e77d40af09b90c498",
+      "mae": 2.84775634296075e-06,
+      "maxError": 1.4156103134155273e-05
+    },
+    "fixed360p": {
+      "available": true,
+      "url": "./models/pseudo-raw-adapter-360p.onnx",
+      "sha256": "db5c07ea02aaef2e7da4e225606cc563b8b589092129842453075d4de854de2c",
+      "outputShape": [
+        1,
+        4,
+        192,
+        320
+      ],
+      "fp16": {
+        "available": true,
+        "url": "./models/pseudo-raw-adapter-360p-fp16.onnx",
+        "sha256": "fcc62a186b52aab7683108c8a1ffb68ef8f041caa4735b35a0ec27dfaf189ae9",
+        "mae": 2.8266900600500596e-06,
+        "maxError": 1.5033408999443054e-05
+      }
+    }
+  },
+  "preprocessing": {
+    "transfer": "srgb-inverse",
+    "bayerOrder": "RGGB",
+    "adapterInput": "linear-rgb",
+    "adapterOutput": "unamplified-pseudo-raw"
+  },
+  "validation": {
+    "verified": true,
+    "referenceSample": "/workspace/nvg-run/sid-official/metrics.json",
+    "mae": 2.3805858617720332e-08,
+    "maxError": 7.152557373046875e-07,
+    "psnr": 148.4475596226027
+  }
+}
