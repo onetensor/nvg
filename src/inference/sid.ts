@@ -55,6 +55,10 @@ export class SIDPipeline {
   get outputChannels(): 1 | 2 | 3 {
     return (this.metadata.sid as { outputChannels?: 1 | 2 | 3 }).outputChannels ?? 3;
   }
+  /** What the 13th plane encodes: frames averaged, or the per-frame noise estimate too. */
+  private get noiseInput(): 'count' | 'estimate' {
+    return (this.metadata.sid as { noiseInput?: 'count' | 'estimate' }).noiseInput ?? 'count';
+  }
   /** 12 (packed RGB) or 13 (plus noise level) for direct models. */
   private get directChannels(): number {
     return (this.metadata.sid as { inputChannels?: number }).inputChannels ?? 12;
@@ -92,12 +96,20 @@ export class SIDPipeline {
     const preprocessStart = performance.now();
     const prepared = await this.preprocessor.prepare(video, geometry, mode, gain, this.directChannels);
     const noisePlane = mode === 'direct' && this.directChannels === 13;
-    this.temporal.apply(prepared.buffer, prepared.dims, temporalLevel, noisePlane);
+    const estimateNoise = noisePlane && this.noiseInput === 'estimate';
+    // Visible packed cells (padding excluded) for the per-frame noise estimate.
+    const visibleCells = [
+      geometry.cropX / 2, geometry.cropY / 2,
+      (geometry.cropX + geometry.width) / 2, (geometry.cropY + geometry.height) / 2,
+    ] as const;
+    this.temporal.apply(prepared.buffer, prepared.dims, temporalLevel, noisePlane,
+      estimateNoise ? visibleCells : undefined);
     // Direct models receive the accumulated, unamplified packed RGB; gain and
     // clipping come after accumulation so averaging sees unclipped values.
     const plane = prepared.dims[2]! * prepared.dims[3]!;
     const modelInput = mode === 'direct'
-      ? this.gainTransform.apply(prepared.buffer, gain, 12 * plane, prepared.dims[1]! * plane)
+      ? this.gainTransform.apply(prepared.buffer, gain, 12 * plane, prepared.dims[1]! * plane,
+        estimateNoise ? this.temporal.sigmaBuffer : undefined)
       : prepared.buffer;
     const inputBackend = mode === 'learned' ? this.adapter! : this.sid;
     const input = inputBackend.tensorFromGpuBuffer(modelInput, prepared.dims);

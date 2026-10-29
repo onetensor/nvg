@@ -23,6 +23,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 
+from .sid_model import estimate_noise
 from .synthetic_isp import inverse_srgb
 
 MAX_GAIN = 300.0
@@ -209,9 +210,10 @@ def simulate_phone_burst(
     device = shorts_encoded.device
     linear = libraw_decode(shorts_encoded)
 
-    # iOS auto-exposure brightens the dark frames but leaves 2-100x for our
-    # gain; each short is normalized by its own exposure ratio.
-    exposure = rng.uniform(0.3, 2.0)
+    # iOS auto-exposure brightens the dark frames but leaves 2-300x for our
+    # gain (the app's cap), weighted towards the darkest cases; each short is
+    # normalized by its own exposure ratio.
+    exposure = 0.3 + 2.2 * math.sqrt(rng.random())
     phone_gain = (ratios.to(device) / 10 ** exposure).clamp_min(1.0)
     value = linear * phone_gain[:, None, None, None]
 
@@ -227,6 +229,12 @@ def simulate_phone_burst(
         scale = photons / value.median().clamp_min(1e-4)
         read = 10 ** rng.uniform(math.log10(0.3), math.log10(4.0)) if extra_noise is None else 1.0
         value = (torch.poisson((value * scale).clamp_min(0)) + torch.randn_like(value) * read) / scale
+        if extra_noise is None and rng.random() < 0.5:
+            # iOS noise reduction leaves blotchy, spatially correlated noise:
+            # blurred Gaussian noise relative to the median shot noise.
+            blotch = _gaussian_blur(torch.randn_like(value), rng.uniform(1.5, 4.0))
+            blotch = blotch / blotch.std().clamp_min(1e-6)
+            value = value + blotch * rng.uniform(0.3, 1.5) * value.median().clamp_min(1e-4) / math.sqrt(photons)
 
     # Camera ISP: color and tone, then noise reduction (chroma, luma) and
     # sharpening, which act on the noisy frames only.
@@ -511,6 +519,7 @@ def degrade_bursts(
     target: str = "phone",
     outlines: list[torch.Tensor] | None = None,
     thin_outlines: list[torch.Tensor] | None = None,
+    sigmas: list[torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Simulated captures accumulated like the runtime.
 
@@ -527,7 +536,8 @@ def degrade_bursts(
     Pass a list as ``outlines`` to collect each sample's teacher outline map,
     area-downsampled like the image, as [1, h, w] tensors in [0, 1]. Pass a
     list as ``thin_outlines`` for the thinned maps, max-pooled so one-pixel
-    lines survive downsampling (binary {0, 1}).
+    lines survive downsampling (binary {0, 1}). Pass a list as ``sigmas`` for
+    each sample's ``estimate_noise`` of its current (unaccumulated) frame.
     """
     if target not in ("phone", "sid"):
         raise ValueError(f"Unknown target {target!r}")
@@ -557,6 +567,8 @@ def degrade_bursts(
         counts.append(count)
         # The runtime measures gain on the current frame, before accumulation.
         currents.append(frames[-1])
+        if sigmas is not None:
+            sigmas.append(estimate_noise(frames[-1:])[0])
         jitter.append(2 ** rng.uniform(-0.35, 0.35) if augment else 1.0)
     gains = (runtime_auto_gain(torch.stack(currents)) * torch.tensor(jitter, device=device)).clamp(1.0, MAX_GAIN)
     targets = torch.stack(references)

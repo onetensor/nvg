@@ -54,16 +54,22 @@ def main() -> None:
                        for key, dataset in datasets.items()}
             totals = {name: {"psnr": 0.0, "ssim": 0.0, "lpips": 0.0} for name in (*low, *high)}
             for index, (low_batch, high_batch) in enumerate(zip(loaders["low"], loaders["high"])):
-                low_in, _, low_gain, low_counts = degrade_bursts(low_batch, device, False, args.noise, frames)
-                high_in, target, high_gain, high_counts = degrade_bursts(high_batch, device, False, args.noise, frames)
+                low_sigma: list[torch.Tensor] = []
+                high_sigma: list[torch.Tensor] = []
+                low_in, _, low_gain, low_counts = degrade_bursts(low_batch, device, False, args.noise, frames,
+                                                                 sigmas=low_sigma)
+                high_in, target, high_gain, high_counts = degrade_bursts(high_batch, device, False, args.noise, frames,
+                                                                         sigmas=high_sigma)
+                low_sigma_t, high_sigma_t = torch.stack(low_sigma), torch.stack(high_sigma)
                 target = luma(target)
                 outputs = {}
                 for name, model in low.items():
-                    prediction = model(direct_input(model, low_in, low_gain[:, None, None, None], low_counts))
+                    prediction = model(direct_input(model, low_in, low_gain[:, None, None, None], low_counts, low_sigma_t))
                     prediction = luma(prediction) if prediction.shape[1] == 3 else prediction[:, :1]
                     outputs[name] = F.interpolate(prediction, scale_factor=2, mode="bilinear", align_corners=False)
                 for name, model in high.items():
-                    prediction = model(direct_input(model, high_in, high_gain[:, None, None, None], high_counts))
+                    prediction = model(direct_input(model, high_in, high_gain[:, None, None, None], high_counts,
+                                                    high_sigma_t))
                     outputs[name] = luma(prediction) if prediction.shape[1] == 3 else prediction[:, :1]
                 for name, prediction in outputs.items():
                     prediction = prediction.clamp(0, 1)

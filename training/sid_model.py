@@ -80,6 +80,7 @@ def load_sid(path: str, device: torch.device | str = "cpu") -> SIDUNet:
         out_channels=int(payload.get("out_channels", 12)) if wrapped else 12,
     ).to(device)
     model.load_state_dict(state, strict=True)
+    model.noise_input = str(payload.get("noise_input", "count")) if wrapped else "count"
     return model
 
 
@@ -93,13 +94,34 @@ def packed_linear_rgb(linear_rgb: torch.Tensor, gain: torch.Tensor | float) -> t
     return (F.pixel_unshuffle(linear_rgb, 2) * gain).clamp(0, 1)
 
 
+def estimate_noise(linear_rgb: torch.Tensor) -> torch.Tensor:
+    """Robust per-frame noise level of [B, 3, H, W] linear frames (mirrors shaders/noise.wgsl).
+
+    On 2x2-packed cells: the mean over the 12 packed planes of sqrt(value),
+    a 4-neighbour high-pass over interior cells, and the median absolute value
+    scaled to a standard deviation (MAD; 1.118 is the high-pass gain for
+    independent noise). sqrt keeps shot noise roughly signal-independent.
+    """
+    cells = F.pixel_unshuffle(linear_rgb.clamp_min(0), 2).sqrt().mean(dim=1)
+    centre = cells[:, 1:-1, 1:-1]
+    neighbours = (cells[:, :-2, 1:-1] + cells[:, 2:, 1:-1] + cells[:, 1:-1, :-2] + cells[:, 1:-1, 2:]) / 4
+    high_pass = (centre - neighbours).abs().flatten(1)
+    return high_pass.median(dim=1).values / (0.6745 * 1.118)
+
+
 def direct_input(
     model: SIDUNet,
     linear_rgb: torch.Tensor,
     gain: torch.Tensor | float,
     counts: torch.Tensor | None = None,
+    sigma: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Packed input, plus a noise-level plane 1/sqrt(frames averaged) for 13-channel models."""
+    """Packed input plus a noise-level plane for 13-channel models.
+
+    The plane is 1/sqrt(frames averaged), or for models trained with
+    ``noise_input == "estimate"`` sqrt(gain) * sigma / sqrt(frames averaged),
+    where sigma is ``estimate_noise`` of the current (unaccumulated) frame.
+    """
     packed = packed_linear_rgb(linear_rgb, gain)
     if model.in_channels == 12:
         return packed
@@ -107,7 +129,13 @@ def direct_input(
         raise ValueError(f"Unsupported direct model with {model.in_channels} input channels")
     if counts is None:
         counts = torch.ones(packed.shape[0], *packed.shape[-2:], device=packed.device)
-    return torch.cat((packed, counts[:, None].clamp_min(1).rsqrt()), dim=1)
+    plane = counts[:, None].clamp_min(1).rsqrt()
+    if getattr(model, "noise_input", "count") == "estimate":
+        if sigma is None:
+            raise ValueError("This model needs the per-frame noise estimate")
+        gain_tensor = torch.as_tensor(gain, device=packed.device, dtype=packed.dtype).reshape(-1, 1, 1, 1)
+        plane = plane * gain_tensor.sqrt() * sigma.reshape(-1, 1, 1, 1)
+    return torch.cat((packed, plane), dim=1)
 
 
 # Rec. 709 luma weights, applied to display-encoded RGB.
