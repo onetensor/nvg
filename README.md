@@ -235,8 +235,10 @@ asynchronous readback ring, and drawn through Canvas2D to avoid the iOS WebGPU
 canvas invisibility/flicker bug. The readback no longer blocks inference, and
 the iPhone path imports a `VideoFrame` snapshot instead of the camera-backed
 `HTMLVideoElement` because WebKit may return black external-texture samples for
-the latter. A one-pixel visible camera edge prevents fully occluded video from
-being throttled. Histogram readback runs once
+the latter. Each snapshot remains open until its submitted preprocessing work
+completes because closing a `VideoFrame` expires its external texture. A
+one-pixel visible camera edge prevents fully occluded video from being
+throttled. Histogram readback runs once
 per 30 processed frames, temporal filtering defaults Off, and the frame pump
 keeps at most one inference in flight so overload drops frames instead of
 building latency.

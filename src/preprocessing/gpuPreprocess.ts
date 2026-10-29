@@ -106,7 +106,16 @@ export class GPUPreprocessor {
       this.statsInFlight = true;
     }
     this.device.queue.submit([encoder.finish()]);
-    videoFrame?.close();
+    if (videoFrame) {
+      // A GPUExternalTexture backed by a VideoFrame expires when the frame is
+      // closed. Submission is asynchronous, so keep it alive until the queue
+      // has actually consumed the preprocessing dispatch.
+      const submittedFrame = videoFrame;
+      void this.device.queue.onSubmittedWorkDone().then(
+        () => submittedFrame.close(),
+        () => submittedFrame.close(),
+      );
+    }
     // mapAsync must start after the copy command is submitted; mapping a buffer
     // first makes it unavailable to the command encoder on strict WebGPU implementations.
     const stats = readback
