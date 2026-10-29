@@ -4,6 +4,7 @@ export type ViewMode = 'original' | 'enhanced' | 'split';
 export type ResolutionChoice = 'auto' | '180p' | '360p' | '540p' | '720p' | '1080p';
 export type TemporalLevel = 'off' | 'low' | 'medium' | 'high';
 export type TargetMode = '30' | '15' | 'quality';
+export type CameraInputPath = 'external-texture' | 'video-copy' | 'video-frame-copy' | 'canvas-copy';
 
 export interface Resolution {
   label: Exclude<ResolutionChoice, 'auto'>;
@@ -26,6 +27,7 @@ export interface LuminanceStats {
   p50: number;
   p90: number;
   blackFraction: number;
+  exactZeroFraction: number;
 }
 
 export interface OutputStats {
@@ -97,7 +99,15 @@ export interface PipelineResult {
   timing: TimingSample;
   stats?: LuminanceStats;
   outputStats?: OutputStats;
+  cameraInputPath: CameraInputPath;
+  presentation?: PresentationStats;
   gain: number;
+}
+
+export interface PresentationStats {
+  displayedFps: number;
+  readbackMs: number;
+  dropped: number;
 }
 
 export interface DebugSnapshot {
@@ -114,8 +124,10 @@ export interface DebugSnapshot {
   modelVariant: ModelVariant;
   gain: number;
   automaticGain: number;
+  cameraInputPath?: CameraInputPath;
   inputStats?: LuminanceStats;
   outputStats?: OutputStats;
+  presentation?: PresentationStats;
   framesReceived: number;
   framesProcessed: number;
   framesSkipped: number;

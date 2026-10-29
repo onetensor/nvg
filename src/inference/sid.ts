@@ -53,6 +53,7 @@ export class SIDPipeline {
     report?.('Preparing camera GPU pipeline…');
     this.device = await this.sid.getDevice();
     this.preprocessor = new GPUPreprocessor(this.device, this.cpuDisplay);
+    await this.preprocessor.initialize();
     this.gainTransform = new PseudoRawGain(this.device);
     this.temporal = new TemporalFilter(this.device);
     if (this.cpuDisplay) this.canvas2dRenderer = new Canvas2DRenderer(this.canvas, this.device);
@@ -72,7 +73,7 @@ export class SIDPipeline {
     const totalStart = performance.now();
 
     const preprocessStart = performance.now();
-    const prepared = this.preprocessor.prepare(video, geometry, mode, gain);
+    const prepared = await this.preprocessor.prepare(video, geometry, mode, gain);
     const inputBackend = mode === 'learned' ? this.adapter! : this.sid;
     const input = inputBackend.tensorFromGpuBuffer(prepared.buffer, prepared.dims);
     const preprocess = performance.now() - preprocessStart;
@@ -129,6 +130,8 @@ export class SIDPipeline {
         },
         ...(stats ? { stats } : {}),
         ...(outputStats ? { outputStats } : {}),
+        cameraInputPath: this.preprocessor.cameraInputPath,
+        ...(this.cpuDisplay ? { presentation: this.canvas2dRenderer.presentation } : {}),
         gain,
       };
     } finally {

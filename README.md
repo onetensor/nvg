@@ -222,7 +222,11 @@ No device numbers are fabricated. The debug overlay measures the live end-to-end
 |---|---|---|---:|---:|---:|---|
 | _not measured_ | — | — | — | — | — | — |
 
-The visible 320×180 frame is internally padded to 320×192 and cropped after SID, avoiding invalid U-Net skip shapes without distorting the displayed 16:9 region. A 640×360 quality option remains available through the same dynamic graph.
+The 180p frame is 320×180 in landscape and 180×320 in portrait. It is padded
+to a multiple of 32 before SID and cropped afterward, avoiding invalid U-Net
+skip shapes while matching the camera orientation. A 360p quality option
+remains available through the same dynamic graph. Cover-style UV scaling keeps
+camera aspect ratios from being stretched.
 
 Production defaults to 320×180, internally padded to 320×192. The prior
 640×384 path costs about 27.7 GMAC per frame across adapter + SID; the new
@@ -233,12 +237,14 @@ path is used instead of ONNX Runtime's newer native WebGPU path. Enhanced frames
 are cropped and packed to RGBA8 on the GPU, copied through a three-buffer
 asynchronous readback ring, and drawn through Canvas2D to avoid the iOS WebGPU
 canvas invisibility/flicker bug. The readback no longer blocks inference, and
-the iPhone path imports a `VideoFrame` snapshot instead of the camera-backed
-`HTMLVideoElement` because WebKit may return black external-texture samples for
-the latter. Each snapshot remains open until its submitted preprocessing work
-completes because closing a `VideoFrame` expires its external texture. A
-one-pixel visible camera edge prevents fully occluded video from being
-throttled. Histogram readback runs once
+the iPhone path copies each frame into a reusable `rgba8unorm` GPU texture with
+`copyExternalImageToTexture()` because WebKit may return black samples for
+camera-backed `GPUExternalTexture`s. The first copy is checked through a WebGPU
+validation scope, and an exact-zero input probe automatically falls back through
+video, `VideoFrame`, and Canvas2D copy sources. This adds one camera upload but
+avoids external-texture lifetime stalls and fails explicitly if all three paths
+are black. A one-pixel visible camera edge prevents fully occluded video from
+being throttled. Histogram readback runs once
 per 30 processed frames, temporal filtering defaults Off, and the frame pump
 keeps at most one inference in flight so overload drops frames instead of
 building latency.
@@ -247,7 +253,7 @@ building latency.
 
 - A trained adapter can only generalize as far as its simulated ISP and fine-tuning data. iPhone-specific paired data would likely improve it.
 - Camera exposure/ISO metadata is not assumed because Safari does not expose it consistently; automatic gain uses luminance statistics.
-- GPU histogram readback occurs every 30 processed frames and is only 1 KiB, but it still introduces an occasional synchronization point.
+- GPU histogram readback occurs every 30 processed frames and is about 1 KiB, but it still introduces an occasional synchronization point.
 - Temporal filtering is deliberately lightweight and may ghost; Off or Low is safest for movement.
 - Dynamic ONNX shapes trade graph-capture speed for runtime resolution switching. Separate static models may benchmark better on a fixed target.
 - The official SID authors explicitly note that the pretrained RAW model does not work directly on ISP-produced JPEG/PNG input. Whether the learned adapter closes enough of that domain gap is the central experiment, not an assumed outcome.

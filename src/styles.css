@@ -19,9 +19,8 @@ button, select { -webkit-tap-highlight-color: transparent; }
 #camera { z-index: 1; }
 #enhanced { z-index: 2; }
 .stage[data-view="original"] #enhanced { display: none; }
-/* Safari throttles fully occluded camera videos and has returned black GPU
-   external textures for them. A one-pixel visible edge keeps its media path
-   live while VideoFrame supplies the full intrinsic camera frame to WebGPU. */
+/* Safari throttles fully occluded camera videos. A one-pixel visible edge keeps
+   its media path live while the intrinsic frame is copied into WebGPU. */
 .stage[data-view="enhanced"] #camera {
   z-index: 3;
   clip-path: inset(0 0 0 calc(100% - 1px));

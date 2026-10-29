@@ -32,6 +32,27 @@ export function resolutionByLabel(label: Resolution['label']): Resolution {
   return resolution;
 }
 
+export function orientResolution(resolution: Resolution, portrait: boolean): Resolution {
+  if (!portrait || resolution.height >= resolution.width) return resolution;
+  return { ...resolution, width: resolution.height, height: resolution.width };
+}
+
+export function coverUvScale(
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number,
+): { x: number; y: number } {
+  if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+    throw new Error('Cover sampling dimensions must all be positive.');
+  }
+  const sourceAspect = sourceWidth / sourceHeight;
+  const targetAspect = targetWidth / targetHeight;
+  return sourceAspect > targetAspect
+    ? { x: targetAspect / sourceAspect, y: 1 }
+    : { x: 1, y: sourceAspect / targetAspect };
+}
+
 export class AdaptiveResolution {
   private index = 1;
   private slowFrames = 0;

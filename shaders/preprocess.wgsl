@@ -7,13 +7,17 @@ struct Params {
   collect_stats: u32,
   gain: f32,
   _pad0: f32,
+  uv_scale_x: f32,
+  uv_scale_y: f32,
+  _pad1: f32,
+  _pad2: f32,
 }
 
 @group(0) @binding(0) var camera_frame: texture_external;
 @group(0) @binding(1) var camera_sampler: sampler;
 @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
-@group(0) @binding(4) var<storage, read_write> histogram: array<atomic<u32>, 256>;
+@group(0) @binding(4) var<storage, read_write> histogram: array<atomic<u32>, 257>;
 
 fn linearize(value: f32) -> f32 {
   if value <= 0.04045 {
@@ -23,7 +27,8 @@ fn linearize(value: f32) -> f32 {
 }
 
 fn linear_rgb(uv: vec2f) -> vec3f {
-  let encoded = textureSampleBaseClampToEdge(camera_frame, camera_sampler, uv).rgb;
+  let covered_uv = (uv - vec2f(0.5)) * vec2f(params.uv_scale_x, params.uv_scale_y) + vec2f(0.5);
+  let encoded = textureSampleBaseClampToEdge(camera_frame, camera_sampler, covered_uv).rgb;
   return vec3f(linearize(encoded.r), linearize(encoded.g), linearize(encoded.b));
 }
 
@@ -32,6 +37,7 @@ fn record_luminance(rgb: vec3f) {
   let luminance = dot(rgb, vec3f(0.2126, 0.7152, 0.0722));
   let bin = u32(clamp(luminance, 0.0, 1.0) * 255.0);
   atomicAdd(&histogram[bin], 1u);
+  if all(rgb == vec3f(0.0)) { atomicAdd(&histogram[256], 1u); }
 }
 
 @compute @workgroup_size(8, 8)
@@ -42,10 +48,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   if params.mode == 0u {
     // Learned adapter input: full-resolution, inverse-sRGB linear NCHW.
-    let crop = (vec2f(params.out_width, params.out_height) -
-                vec2f(params.visible_width, params.visible_height)) * 0.5;
+    let crop = (vec2f(vec2u(params.out_width, params.out_height)) -
+                vec2f(vec2u(params.visible_width, params.visible_height))) * 0.5;
     let pixel = vec2f(gid.xy) - crop;
-    let uv = (pixel + vec2f(0.5)) / vec2f(params.visible_width, params.visible_height);
+    let uv = (pixel + vec2f(0.5)) / vec2f(vec2u(params.visible_width, params.visible_height));
     let rgb = linear_rgb(uv);
     output[index] = rgb.r;
     output[plane + index] = rgb.g;
@@ -55,8 +61,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   // Deterministic RGGB baseline. Each invocation emits one packed Bayer cell.
-  let visible = vec2f(params.visible_width, params.visible_height);
-  let padded = vec2f(params.out_width * 2u, params.out_height * 2u);
+  let visible = vec2f(vec2u(params.visible_width, params.visible_height));
+  let padded = vec2f(vec2u(params.out_width * 2u, params.out_height * 2u));
   let crop = (padded - visible) * 0.5;
   let base = vec2f(gid.xy * 2u) - crop;
   let p00 = linear_rgb((base + vec2f(0.5, 0.5)) / visible);
