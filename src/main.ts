@@ -7,7 +7,7 @@ import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
 import { isAppleMobileWebKit } from './platform';
 import { formatDebug, Profiler } from './profiler';
-import type { AdapterMode, LuminanceStats, MonoTint, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
+import type { AdapterMode, DirectModelAsset, LuminanceStats, MonoTint, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
 import { applyView, controls, selectedValues, setStatus } from './ui/controls';
 
 const ui = controls();
@@ -55,9 +55,10 @@ async function loadMetadata(): Promise<ModelMetadata> {
   if (value.sid.fp16) value.sid.fp16.url = modelUrl(value.sid.fp16.url);
   if (value.sidJoint?.fp16) value.sidJoint.fp16.url = modelUrl(value.sidJoint.fp16.url);
   if (value.adapter.fp16) value.adapter.fp16.url = modelUrl(value.adapter.fp16.url);
-  if (value.sidDirect) {
-    value.sidDirect.url = modelUrl(value.sidDirect.url);
-    if (value.sidDirect.fp16) value.sidDirect.fp16.url = modelUrl(value.sidDirect.fp16.url);
+  for (const asset of [value.sidDirect, ...Object.values(value.directVariants ?? {})]) {
+    if (!asset) continue;
+    asset.url = modelUrl(asset.url);
+    if (asset.fp16) asset.fp16.url = modelUrl(asset.fp16.url);
   }
   resolveFixedAsset(value.sid);
   if (value.sidJoint) resolveFixedAsset(value.sidJoint);
@@ -70,12 +71,24 @@ function selectedMetadata(): Promise<ModelMetadata> {
   return metadataPromise;
 }
 
-/** `?model=direct|joint` overrides the metadata's production default when available. */
+const modelQuery = new URLSearchParams(window.location.search).get('model');
+
+/**
+ * `?model=joint` selects the adapter pair, `?model=<variant>` a named direct
+ * model, and `?model=direct` the production direct model; otherwise the
+ * metadata's production default applies.
+ */
 function requestedVariant(value: ModelMetadata): ModelVariant {
-  const query = new URLSearchParams(window.location.search).get('model');
-  const wanted = query === 'direct' || query === 'joint' ? query : value.production ?? 'joint';
-  if (wanted === 'direct' && value.sidDirect?.available) return 'direct';
+  const variant = modelQuery ? value.directVariants?.[modelQuery] : undefined;
+  const wanted = variant ? 'direct' : modelQuery === 'direct' || modelQuery === 'joint' ? modelQuery : value.production ?? 'joint';
+  if (wanted === 'direct' && (variant ?? value.sidDirect)?.available) return 'direct';
   return value.sidJoint?.available ? 'joint' : 'original';
+}
+
+/** The direct model to run: a `?model=` variant, else the production one. */
+function selectedDirect(value: ModelMetadata): DirectModelAsset {
+  const variant = modelQuery ? value.directVariants?.[modelQuery] : undefined;
+  return variant?.available ? variant : value.sidDirect!;
 }
 
 async function preloadSelectedModels(): Promise<boolean> {
@@ -83,7 +96,8 @@ async function preloadSelectedModels(): Promise<boolean> {
   if (!gpuAdapter?.features.has('shader-f16')) return false;
   const value = await selectedMetadata();
   if (requestedVariant(value) === 'direct') {
-    await preloadModel(value.sidDirect!.fp16?.available ? value.sidDirect!.fp16.url : value.sidDirect!.url);
+    const asset = selectedDirect(value);
+    await preloadModel(asset.fp16?.available ? asset.fp16.url : asset.url);
     return true;
   }
   const selectedSid = value.sidJoint?.available ? value.sidJoint : value.sid;
@@ -160,7 +174,12 @@ async function initializePipeline(): Promise<void> {
   if (!gpuAdapter.features.has('shader-f16')) {
     throw new Error('This optimized build requires WebGPU shader-f16; FP32 is intentionally not downloaded.');
   }
-  const selectedSid = direct ? metadata.sidDirect! : activeModel === 'joint' ? metadata.sidJoint! : metadata.sid;
+  const directAsset = direct ? selectedDirect(metadata) : undefined;
+  const selectedSid = directAsset ?? (activeModel === 'joint' ? metadata.sidJoint! : metadata.sid);
+  if (directAsset?.defaultResolution &&
+      ui.resolution.querySelector(`option[value="${directAsset.defaultResolution}"]`)) {
+    ui.resolution.value = directAsset.defaultResolution;
+  }
   const requested = selectedValues(ui);
   geometry = selectedResolution(requested.resolution);
   const appleMobileWebKit = isAppleMobileWebKit();
@@ -218,7 +237,7 @@ async function initializePipeline(): Promise<void> {
     ui.adapter.disabled = true;
   }
   const label = direct
-    ? `Direct SID (width ${metadata.sidDirect!.width})`
+    ? `${directAsset!.name ?? 'Direct SID'} (width ${directAsset!.width})`
     : activeModel === 'joint' ? 'Joint-tuned SID' : 'Original SID';
   const speed = useGraphCapture
     ? ' · static graph capture'

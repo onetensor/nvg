@@ -31,7 +31,10 @@ const deployedDirect = metadata.sidDirect?.fp16?.available ? fp16Only(metadata.s
 if (metadata.production === 'direct' && !deployedDirect) {
   throw new Error('metadata.production is "direct" but no FP16 direct model is packaged.');
 }
-const { sidDirect: _sidDirect, ...withoutDirect } = metadata;
+const deployedVariants = Object.fromEntries(Object.entries(metadata.directVariants ?? {})
+  .filter(([, asset]) => asset.fp16?.available)
+  .map(([name, asset]) => [name, fp16Only(asset)]));
+const { sidDirect: _sidDirect, directVariants: _directVariants, ...withoutDirect } = metadata;
 const deployedMetadata = {
   ...withoutDirect,
   // Both keys deliberately resolve to the selected joint model. The original
@@ -40,6 +43,7 @@ const deployedMetadata = {
   sidJoint: deployedSid,
   adapter: deployedAdapter,
   ...(deployedDirect ? { sidDirect: deployedDirect } : {}),
+  ...(Object.keys(deployedVariants).length ? { directVariants: deployedVariants } : {}),
 };
 
 await rm(destination, { recursive: true, force: true });
@@ -47,7 +51,7 @@ await mkdir(destination, { recursive: true });
 await writeFile(resolve(destination, 'metadata.json'), `${JSON.stringify(deployedMetadata, null, 2)}\n`);
 
 const deployedUrls = new Set();
-for (const asset of [deployedSid, deployedAdapter, deployedDirect].filter(Boolean)) {
+for (const asset of [deployedSid, deployedAdapter, deployedDirect, ...Object.values(deployedVariants)].filter(Boolean)) {
   deployedUrls.add(asset.url);
   if (asset.fp16?.available) deployedUrls.add(asset.fp16.url);
 }

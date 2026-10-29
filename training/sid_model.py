@@ -137,6 +137,56 @@ def to_mono(source: SIDUNet) -> SIDUNet:
     return model
 
 
+def prune_width(source: SIDUNet, width: int) -> SIDUNet:
+    """Structured pruning to a narrower U-Net that keeps the source's strongest channels.
+
+    Every level keeps the output channels with the largest filter L1 norms, and
+    each following layer keeps the matching input channels, including both
+    halves of the decoder's skip concatenations. The result is a warm start for
+    distillation, not a finished model.
+    """
+    if width >= source.width:
+        raise ValueError("Pruning must reduce the width")
+    state = source.state_dict()
+    pruned: dict[str, torch.Tensor] = {}
+    full = [source.width * factor for factor in (1, 2, 4, 8, 16)]
+    kept = [width * factor for factor in (1, 2, 4, 8, 16)]
+
+    def strongest(norms: torch.Tensor, count: int) -> torch.Tensor:
+        return torch.topk(norms, count).indices.sort().values
+
+    def conv(name: str, inputs: torch.Tensor, count: int | None) -> torch.Tensor:
+        weight = state[f"{name}.weight"][:, inputs]
+        outputs = (torch.arange(weight.shape[0]) if count is None
+                   else strongest(weight.abs().sum(dim=(1, 2, 3)), count))
+        pruned[f"{name}.weight"] = weight[outputs].clone()
+        pruned[f"{name}.bias"] = state[f"{name}.bias"][outputs].clone()
+        return outputs
+
+    def upsample(name: str, inputs: torch.Tensor, count: int) -> torch.Tensor:
+        weight = state[f"{name}.weight"][inputs]  # ConvTranspose: [in, out, k, k]
+        outputs = strongest(weight.abs().sum(dim=(0, 2, 3)), count)
+        pruned[f"{name}.weight"] = weight[:, outputs].clone()
+        return outputs
+
+    features = torch.arange(source.in_channels)
+    skips = []
+    for level in range(5):
+        features = conv(f"conv{level + 1}_1", features, kept[level])
+        features = conv(f"conv{level + 1}_2", features, kept[level])
+        skips.append(features)
+    for decoder, level in zip(range(6, 10), range(3, -1, -1)):
+        upsampled = upsample(f"up{decoder}", features, kept[level])
+        # Decoder input is cat(upsampled, skip); skip channels follow full[level].
+        features = conv(f"conv{decoder}_1", torch.cat((upsampled, skips[level] + full[level])), kept[level])
+        features = conv(f"conv{decoder}_2", features, kept[level])
+    conv("conv10", features, None)
+
+    model = SIDUNet(in_channels=source.in_channels, width=width, out_channels=source.out_channels)
+    model.load_state_dict(pruned, strict=True)
+    return model
+
+
 def add_noise_level_input(source: SIDUNet) -> SIDUNet:
     """A 13-channel copy of a 12-channel direct model whose extra plane starts at zero weight."""
     if source.in_channels != 12:
