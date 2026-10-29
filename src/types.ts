@@ -88,6 +88,8 @@ export interface DirectModelAsset extends ModelAsset {
   inputChannels: number;
   width: number;
   outputChannels?: 1 | 2 | 3;
+  /** 13th-plane encoding: frames averaged only, or with the per-frame noise estimate. */
+  noiseInput?: 'count' | 'estimate';
   /** Resolution the model is sized for; applied at start-up. */
   defaultResolution?: Exclude<ResolutionChoice, 'auto'>;
   name?: string;

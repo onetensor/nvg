@@ -70,14 +70,17 @@ def main() -> None:
             loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4, collate_fn=collate_list)
             totals = {name: {"psnr": 0.0, "ssim": 0.0, "lpips": 0.0, "psnr_color_fit": 0.0} for name in models}
             for index, batch in enumerate(loader):
-                inputs, targets, gain, counts = degrade_bursts(batch, device, False, noise, frames, target=args.target)
+                sigmas: list[torch.Tensor] = []
+                inputs, targets, gain, counts = degrade_bursts(batch, device, False, noise, frames, target=args.target,
+                                                               sigmas=sigmas)
+                sigma = torch.stack(sigmas)
                 gain = gain[:, None, None, None]
                 shown = srgb_encode((inputs * gain).clamp(0, 1))
                 if args.luma:
                     targets = luma(targets)
                 tiles = [luma(shown) if args.luma else shown]
                 for name, model in models.items():
-                    prediction = model(direct_input(model, inputs, gain, counts)).clamp(0, 1)
+                    prediction = model(direct_input(model, inputs, gain, counts, sigma)).clamp(0, 1)
                     if prediction.shape[1] == 2:  # luma + outline logits
                         prediction = prediction[:, :1]
                     if args.luma and prediction.shape[1] == 3:

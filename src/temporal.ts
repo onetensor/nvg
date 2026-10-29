@@ -1,4 +1,5 @@
 import alignShader from '../shaders/align.wgsl?raw';
+import noiseShader from '../shaders/noise.wgsl?raw';
 import temporalShader from '../shaders/temporal.wgsl?raw';
 import type { TemporalLevel } from './types';
 
@@ -38,6 +39,13 @@ export class TemporalAccumulator {
   private readonly alignParams: GPUBuffer;
   private readonly shift: GPUBuffer;
   private readonly costs: GPUBuffer;
+  private readonly noisePipelines: { histogram: GPUComputePipeline; pick: GPUComputePipeline };
+  private readonly noiseLayout: GPUBindGroupLayout;
+  private readonly noiseParams: GPUBuffer;
+  private readonly noiseHistogram: GPUBuffer;
+  private readonly sigma: GPUBuffer;
+  private noiseBindGroup: GPUBindGroup | null = null;
+  private noiseSource: GPUBuffer | null = null;
   private readonly alignEnabled = new URLSearchParams(globalThis.location?.search ?? '').get('align') !== '0';
   private sides: [Side, Side] | null = null;
   private motion: GPUBuffer | null = null;
@@ -96,6 +104,29 @@ export class TemporalAccumulator {
       size: (128 + FINE_CANDIDATES) * 4,
       usage: GPUBufferUsage.STORAGE,
     });
+    this.noiseLayout = device.createBindGroupLayout({
+      label: 'noise estimate',
+      entries: [
+        { binding: 0, visibility: compute, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: compute, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: compute, buffer: { type: 'storage' } },
+        { binding: 3, visibility: compute, buffer: { type: 'storage' } },
+      ],
+    });
+    const noiseModule = device.createShaderModule({ label: 'noise estimate', code: noiseShader });
+    const noiseLayout = device.createPipelineLayout({ bindGroupLayouts: [this.noiseLayout] });
+    this.noisePipelines = {
+      histogram: device.createComputePipeline({ label: 'noise histogram', layout: noiseLayout, compute: { module: noiseModule, entryPoint: 'histogram_pass' } }),
+      pick: device.createComputePipeline({ label: 'noise median', layout: noiseLayout, compute: { module: noiseModule, entryPoint: 'pick_pass' } }),
+    };
+    this.noiseParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.noiseHistogram = device.createBuffer({ label: 'noise histogram', size: 2048 * 4, usage: GPUBufferUsage.STORAGE });
+    this.sigma = device.createBuffer({ label: 'noise estimate', size: 16, usage: GPUBufferUsage.STORAGE });
+  }
+
+  /** Per-frame noise estimate (sigma[0]) written when `apply` is asked for it. */
+  get sigmaBuffer(): GPUBuffer {
+    return this.sigma;
   }
 
   /** The alignment shift buffer (dx, dy in packed cells, then the coarse estimate). */
@@ -108,7 +139,14 @@ export class TemporalAccumulator {
    * plane is not image data: it receives 1/sqrt(frames averaged) per pixel,
    * so it is written even when accumulation is off.
    */
-  apply(frame: GPUBuffer, dims: readonly number[], level: TemporalLevel, noisePlane = false): void {
+  apply(
+    frame: GPUBuffer,
+    dims: readonly number[],
+    level: TemporalLevel,
+    noisePlane = false,
+    /** Visible cells [x0, y0, x1, y1] to estimate per-frame noise over (before accumulation). */
+    estimateNoiseIn?: readonly [number, number, number, number],
+  ): void {
     if (level === 'off' && !noisePlane) {
       this.initialized = false;
       return;
@@ -134,6 +172,7 @@ export class TemporalAccumulator {
 
     const groups = this.bindGroups[this.parity]!;
     const encoder = this.device.createCommandEncoder({ label: 'input temporal accumulation encoder' });
+    if (estimateNoiseIn) this.encodeNoiseEstimate(encoder, frame, channels, width, height, estimateNoiseIn);
     if (this.initialized && this.alignEnabled && width >= 16 && height >= 16) {
       const coarseWidth = Math.floor(width / 4);
       const coarseHeight = Math.floor(height / 4);
@@ -181,6 +220,38 @@ export class TemporalAccumulator {
     this.initialized = false;
   }
 
+  /** Mirrors training.sid_model.estimate_noise on the current, unaccumulated frame. */
+  private encodeNoiseEstimate(
+    encoder: GPUCommandEncoder,
+    frame: GPUBuffer,
+    channels: number,
+    width: number,
+    height: number,
+    [x0, y0, x1, y1]: readonly [number, number, number, number],
+  ): void {
+    this.device.queue.writeBuffer(this.noiseParams, 0, new Uint32Array([width, height, channels, x0, y0, x1, y1, 0]));
+    if (!this.noiseBindGroup || this.noiseSource !== frame) {
+      this.noiseSource = frame;
+      this.noiseBindGroup = this.device.createBindGroup({
+        layout: this.noiseLayout,
+        entries: [
+          { binding: 0, resource: { buffer: frame } },
+          { binding: 1, resource: { buffer: this.noiseParams } },
+          { binding: 2, resource: { buffer: this.noiseHistogram } },
+          { binding: 3, resource: { buffer: this.sigma } },
+        ],
+      });
+    }
+    const inner = Math.max(0, x1 - x0 - 2) * Math.max(0, y1 - y0 - 2);
+    for (const [pipeline, workgroups] of [[this.noisePipelines.histogram, Math.ceil(inner / 256)], [this.noisePipelines.pick, 1]] as const) {
+      const pass = encoder.beginComputePass({ label: 'noise estimate' });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, this.noiseBindGroup);
+      pass.dispatchWorkgroups(workgroups);
+      pass.end();
+    }
+  }
+
   dispose(): void {
     for (const side of this.sides ?? []) {
       side.history.destroy();
@@ -192,6 +263,10 @@ export class TemporalAccumulator {
     this.alignParams.destroy();
     this.shift.destroy();
     this.costs.destroy();
+    this.noiseParams.destroy();
+    this.noiseHistogram.destroy();
+    this.sigma.destroy();
+    this.noiseBindGroup = null;
     this.bindGroups = [];
     this.source = null;
   }

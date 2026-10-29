@@ -36,6 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lpips-weight", type=float, default=0.0)
     parser.add_argument("--outline-weight", type=float, default=0.0,
                         help="Add an object-outline output plane trained against teacher outlines")
+    parser.add_argument("--noise-input", choices=("count", "estimate"), default="count",
+                        help="13th plane: 1/sqrt(frames), or sqrt(gain) * per-frame noise estimate / sqrt(frames)")
     parser.add_argument("--mono", action="store_true",
                         help="Train a luminance-only output (warm-started from an RGB model's luma)")
     parser.add_argument("--target", choices=("phone", "sid"), default="phone",
@@ -70,6 +72,12 @@ def worker_init(_: int) -> None:
 
 
 def build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
+    model = _build_model(args, device)
+    model.noise_input = args.noise_input
+    return model
+
+
+def _build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
     if args.init_direct:
         source = load_sid(args.init_direct)
         if source.in_channels == 12 and args.in_channels == 13:
@@ -94,7 +102,8 @@ def build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
     return SIDUNet(in_channels=12, width=args.width).to(device)
 
 
-Prepared = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]
+Prepared = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None,
+                 torch.Tensor | None]
 Prepare = Callable[..., Prepared]
 
 # Burst validation: a clean single frame and a noisier 4-frame accumulation.
@@ -106,9 +115,10 @@ def batch_preparer(args: argparse.Namespace, device: torch.device) -> Prepare:
     def prepare(batch, augment: bool, extra_noise: float | None = None) -> Prepared:
         counts = None
         outlines: list[torch.Tensor] | None = [] if args.outline_weight > 0 else None
+        sigmas: list[torch.Tensor] = []
         if args.protocol == "burst":
             inputs, targets, gain, counts = degrade_bursts(
-                batch, device, augment, extra_noise, target=args.target, outlines=outlines)
+                batch, device, augment, extra_noise, target=args.target, outlines=outlines, sigmas=sigmas)
         elif args.protocol == "phone":
             inputs, targets, gain = degrade_batch(batch, device, args.output_size, augment)
         else:
@@ -118,7 +128,8 @@ def batch_preparer(args: argparse.Namespace, device: torch.device) -> Prepare:
         if args.mono:
             targets = luma(targets)
         outline_targets = torch.stack(outlines) if outlines else None
-        return inputs, targets, gain[:, None, None, None], counts, outline_targets
+        sigma = torch.stack(sigmas) if sigmas else None
+        return inputs, targets, gain[:, None, None, None], counts, outline_targets, sigma
     return prepare
 
 
@@ -136,9 +147,9 @@ def validate(
     samples = 0
     outline_loss = 0.0
     for batch in loader:
-        inputs, targets, gain, counts, outlines = prepare(batch, False, extra_noise)
+        inputs, targets, gain, counts, outlines, sigma = prepare(batch, False, extra_noise)
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
-            result = model(direct_input(model, inputs, gain, counts)).float()
+            result = model(direct_input(model, inputs, gain, counts, sigma)).float()
         if outlines is not None:
             outline_loss += balanced_outline_loss(result[:, 1:2], outlines).item() * result.shape[0]
         prediction = result[:, :targets.shape[1]].clamp(0, 1)
@@ -247,6 +258,7 @@ def main() -> None:
             {
                 "state_dict": model.state_dict(),
                 "in_channels": model.in_channels,
+                "noise_input": model.noise_input,
                 "out_channels": model.out_channels,
                 "width": args.width,
                 "input": "packed_linear_rgb",
@@ -274,8 +286,8 @@ def main() -> None:
         except StopIteration:
             iterator = iter(train_loader)
             batch = next(iterator)
-        inputs, targets, gain, counts, outlines = prepare(batch, True)
-        packed = direct_input(model, inputs, gain, counts).contiguous(memory_format=torch.channels_last)
+        inputs, targets, gain, counts, outlines, sigma = prepare(batch, True)
+        packed = direct_input(model, inputs, gain, counts, sigma).contiguous(memory_format=torch.channels_last)
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             result = model(packed).float()
@@ -283,7 +295,7 @@ def main() -> None:
             target_loss = charbonnier(prediction, targets) + 0.2 * (1 - ssim(prediction, targets))
             if teacher is not None:
                 with torch.no_grad():
-                    teacher_input = direct_input(teacher, inputs, gain, counts).contiguous(
+                    teacher_input = direct_input(teacher, inputs, gain, counts, sigma).contiguous(
                         memory_format=torch.channels_last)
                     reference = teacher(teacher_input).float()[:, :prediction.shape[1]].clamp(0, 1)
                 teacher_loss = charbonnier(prediction, reference)
