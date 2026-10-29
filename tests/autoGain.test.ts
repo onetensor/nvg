@@ -12,7 +12,14 @@ describe('gain mapping', () => {
     vi.spyOn(performance, 'now').mockReturnValue(0);
     const controller = new AutoGainController();
     controller.reset(10);
-    const next = controller.update({ mean: 0.01, p10: 0.001, p50: 0.01, p90: 0.04, blackFraction: 0.2 }, 500);
+    const next = controller.update({
+      mean: 0.01,
+      p10: 0.001,
+      p50: 0.01,
+      p90: 0.04,
+      blackFraction: 0.2,
+      exactZeroFraction: 0.1,
+    }, 500);
     expect(next).toBeGreaterThan(10);
     expect(next).toBeLessThan(18);
     vi.restoreAllMocks();

@@ -1,7 +1,7 @@
 import './styles.css';
 import { AutoGainController, sliderToGain } from './autoGain';
 import { CameraController, type CameraInfo } from './camera';
-import { AdaptiveResolution, modelGeometry, resolutionByLabel } from './geometry';
+import { AdaptiveResolution, modelGeometry, orientResolution, resolutionByLabel } from './geometry';
 import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
 import { isAppleMobileWebKit } from './platform';
@@ -27,6 +27,8 @@ let activeModel: ModelVariant = 'joint';
 let metadataPromise: Promise<ModelMetadata> | null = null;
 let outputStats: PipelineResult['outputStats'];
 let inputStats: PipelineResult['stats'];
+let cameraInputPath: PipelineResult['cameraInputPath'];
+let presentation: PipelineResult['presentation'];
 
 function modelUrl(url: string): string {
   if (url.startsWith('./')) return `${import.meta.env.BASE_URL}${url.slice(2)}`;
@@ -77,8 +79,8 @@ function updateRequirements(): void {
 }
 
 function selectedResolution(choice: ResolutionChoice): ModelGeometry {
-  if (choice === 'auto') return modelGeometry(adaptiveResolution.current);
-  return modelGeometry(resolutionByLabel(choice));
+  const resolution = choice === 'auto' ? adaptiveResolution.current : resolutionByLabel(choice);
+  return modelGeometry(orientResolution(resolution, cameraInfo.height > cameraInfo.width));
 }
 
 function targetBudget(mode: TargetMode): number {
@@ -112,8 +114,10 @@ function updateDebug(now: number, mode: AdapterMode): void {
     adapterMode: mode,
     gain: currentGain,
     automaticGain: ui.autoGain.checked ? currentGain : 0,
+    ...(cameraInputPath ? { cameraInputPath } : {}),
     ...(inputStats ? { inputStats } : {}),
     ...(outputStats ? { outputStats } : {}),
+    ...(presentation ? { presentation } : {}),
   }));
 }
 
@@ -206,6 +210,8 @@ async function processFrame(now: number): Promise<void> {
     const result = await pipeline.process(ui.video, geometry, state.adapter, currentGain, state.temporal);
     if (result.outputStats) outputStats = result.outputStats;
     if (result.stats) inputStats = result.stats;
+    cameraInputPath = result.cameraInputPath;
+    presentation = result.presentation;
     profiler.frameProcessed(result.timing);
     frameErrors = 0;
     if (result.stats && ui.autoGain.checked) {
@@ -215,7 +221,7 @@ async function processFrame(now: number): Promise<void> {
     if (state.resolution === 'auto') {
       const changed = adaptiveResolution.observe(result.timing.total, targetBudget(state.target));
       if (changed) {
-        geometry = modelGeometry(changed);
+        geometry = modelGeometry(orientResolution(changed, cameraInfo.height > cameraInfo.width));
         pipeline.resetTemporal();
         setStatus(ui, `Auto resolution: ${changed.label}`);
       }

@@ -1,6 +1,21 @@
 import postprocessShader from '../shaders/postprocess.wgsl?raw';
 import readbackShader from '../shaders/readback.wgsl?raw';
-import type { ModelGeometry, OutputStats } from './types';
+import type { ModelGeometry, OutputStats, PresentationStats } from './types';
+
+class RollingAverage {
+  private readonly values: number[] = [];
+  private total = 0;
+
+  constructor(private readonly capacity: number) {}
+
+  add(value: number): void {
+    this.values.push(value);
+    this.total += value;
+    if (this.values.length > this.capacity) this.total -= this.values.shift()!;
+  }
+
+  get value(): number { return this.values.length ? this.total / this.values.length : 0; }
+}
 
 interface ReadbackSlot {
   buffer: GPUBuffer;
@@ -22,6 +37,11 @@ export class Canvas2DRenderer {
   private presentedSequence = 0;
   private lastStats: OutputStats | undefined;
   private disposed = false;
+  private readonly maximumBytes = 640 * 360 * 4;
+  private readonly displayIntervals = new RollingAverage(30);
+  private readonly readbackTimes = new RollingAverage(30);
+  private lastPresentedAt = 0;
+  private presentationDropped = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly device: GPUDevice) {
     const context = canvas.getContext('2d', { alpha: false });
@@ -42,16 +62,15 @@ export class Canvas2DRenderer {
     });
     // Production exposes 180p and 360p. Three staging buffers let mapping
     // overlap subsequent inference without allocating memory per frame.
-    const maximumBytes = 640 * 360 * 4;
     this.packed = device.createBuffer({
       label: 'SID packed RGBA',
-      size: maximumBytes,
+      size: this.maximumBytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     });
     this.slots = Array.from({ length: 3 }, (_, index) => ({
       buffer: device.createBuffer({
         label: `SID asynchronous readback ${index + 1}`,
-        size: maximumBytes,
+        size: this.maximumBytes,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       }),
       busy: false,
@@ -67,9 +86,15 @@ export class Canvas2DRenderer {
       this.canvas.height = geometry.height;
     }
 
-    const slot = this.slots.find((candidate) => !candidate.busy);
-    if (!slot) return this.lastStats;
     const byteLength = geometry.width * geometry.height * 4;
+    if (byteLength > this.maximumBytes) {
+      throw new Error(`Display frame ${geometry.width}×${geometry.height} exceeds the 640×360 readback capacity.`);
+    }
+    const slot = this.slots.find((candidate) => !candidate.busy);
+    if (!slot) {
+      this.presentationDropped += 1;
+      return this.lastStats;
+    }
     const values = new Uint32Array([
       geometry.paddedWidth,
       geometry.paddedHeight,
@@ -103,8 +128,16 @@ export class Canvas2DRenderer {
 
     slot.busy = true;
     const sequence = ++this.sequence;
-    void this.present(slot, byteLength, geometry.width, geometry.height, sequence);
+    void this.present(slot, byteLength, geometry.width, geometry.height, sequence, performance.now());
     return this.lastStats;
+  }
+
+  get presentation(): PresentationStats {
+    return {
+      displayedFps: this.displayIntervals.value ? 1000 / this.displayIntervals.value : 0,
+      readbackMs: this.readbackTimes.value,
+      dropped: this.presentationDropped,
+    };
   }
 
   dispose(): void {
@@ -126,6 +159,7 @@ export class Canvas2DRenderer {
     width: number,
     height: number,
     sequence: number,
+    submittedAt: number,
   ): Promise<void> {
     try {
       await slot.buffer.mapAsync(GPUMapMode.READ, 0, byteLength);
@@ -155,7 +189,7 @@ export class Canvas2DRenderer {
           min: minimum / 255,
           mean: sum / (width * height * 3 * 255),
           max: maximum / 255,
-          nonFinite: 0,
+          nonFinite: Number.NaN,
         };
       }
       slot.buffer.unmap();
@@ -163,6 +197,10 @@ export class Canvas2DRenderer {
           this.canvas.width === width && this.canvas.height === height) {
         this.presentedSequence = sequence;
         this.context.putImageData(slot.pixels, 0, 0);
+        const now = performance.now();
+        if (this.lastPresentedAt) this.displayIntervals.add(now - this.lastPresentedAt);
+        this.lastPresentedAt = now;
+        this.readbackTimes.add(now - submittedAt);
       }
     } catch (error) {
       if (!this.disposed) console.warn('Asynchronous SID display readback failed.', error);

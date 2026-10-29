@@ -44,8 +44,8 @@ fn sample_bilinear(pixel: vec2f, channel: u32) -> f32 {
 
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
-  let visible = vec2f(params.visible_width, params.visible_height);
-  let crop = vec2f(params.crop_x, params.crop_y);
+  let visible = vec2f(vec2u(params.visible_width, params.visible_height));
+  let crop = vec2f(vec2u(params.crop_x, params.crop_y));
   let pixel = crop + input.uv * visible - vec2f(0.5);
   let rgb = vec3f(sample_bilinear(pixel, 0u), sample_bilinear(pixel, 1u), sample_bilinear(pixel, 2u));
   return vec4f(clamp(rgb, vec3f(0.0), vec3f(1.0)), 1.0);
