@@ -44,7 +44,7 @@ npm run preview
 
 The workflow at `.github/workflows/deploy-pages.yml` tests, builds, and deploys
 the site on pushes to `master` or `main`. It also requests Pages enablement for
-the repository. For `onetensor/nvg`, the resulting URL is expected to be:
+the repository. For `onetensor/nvg`, the deployed site is:
 
 `https://onetensor.github.io/nvg/`
 
@@ -233,7 +233,7 @@ building latency.
 
 - A trained adapter can only generalize as far as its simulated ISP and fine-tuning data. iPhone-specific paired data would likely improve it.
 - Camera exposure/ISO metadata is not assumed because Safari does not expose it consistently; automatic gain uses luminance statistics.
-- GPU histogram readback occurs every 15 processed frames and is only 1 KiB, but it still introduces an occasional synchronization point.
+- GPU histogram readback occurs every 30 processed frames and is only 1 KiB, but it still introduces an occasional synchronization point.
 - Temporal filtering is deliberately lightweight and may ghost; Off or Low is safest for movement.
 - Dynamic ONNX shapes trade graph-capture speed for runtime resolution switching. Separate static models may benchmark better on a fixed target.
 - The official SID authors explicitly note that the pretrained RAW model does not work directly on ISP-produced JPEG/PNG input. Whether the learned adapter closes enough of that domain gap is the central experiment, not an assumed outcome.
