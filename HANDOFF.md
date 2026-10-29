@@ -16,14 +16,74 @@ documentation is in [`README.md`](README.md).
 - Cache-busted audited build: `https://onetensor.github.io/nvg/?v=50de041`
 - Successful Pages run: `https://github.com/onetensor/nvg/actions/runs/40825512720`
 - Production assets: dynamic FP16 joint-tuned SID plus dynamic FP16 adapter only
-- Most important unknown: **the user has not yet reported a physical-iPhone
-  result from `50de041`.** Do not claim that the black-camera problem is fixed
-  until that test is received.
+- iPhone result for `50de041` (reported by the user): input is no longer black,
+  but the image was rotated 90° counter-clockwise, the bottom half was black,
+  and it ran at about 6 FPS although the per-stage timings summed to ~15 ms
+  while `total` was ~90 ms. All three are addressed by the follow-up below;
+  **the follow-up has not yet been tested on a physical iPhone.**
 
-The working tree was clean immediately before this handoff file was created.
-The previous implementation change was independently reviewed by a second
-agent, which found no remaining P0/P1 blocker in the iPhone 180p/360p dynamic
-model path.
+## Follow-up after the first `50de041` phone report
+
+### Rotation and the black bottom half
+
+WebKit's direct `copyExternalImageToTexture()` of the camera copies the
+unrotated landscape sensor buffer (1280×720) while the `<video>` reports upright
+portrait dimensions (720×1280). Copying with the portrait size into a portrait
+texture filled the top ~56% with a sideways image and left the rest black.
+
+Fix (`src/cameraInput.ts`, `src/preprocessing/gpuPreprocess.ts`,
+`shaders/preprocessTexture.wgsl`):
+
+- Direct copies use the buffer size from a short-lived `VideoFrame`
+  (`visibleRect`/`coded*`), closed immediately, and the texture matches it.
+- The shader takes `quarter_turns` (clockwise) and maps upright UV into the
+  buffer; cover scaling is computed on the upright size.
+- During startup validation a `thumbnail` entry point averages the copied buffer
+  into 16×16 cells; the CPU compares that against an upright 64→16 Canvas2D
+  `drawImage` probe at all four quarter turns (`estimateOrientation`). The best
+  correlated turn is used. A path is rejected if >10% of lit reference cells are
+  black in the copy or correlation is poor; flat scenes are retried up to 45
+  samples before falling back to the metadata guess. The console logs the
+  verdict, e.g. `video-copy orientation: 90° clockwise (r=…)`.
+- Order stays `video-copy` → `video-frame-copy` → `canvas-copy`. Canvas copy
+  is correct by construction (it now cover-crops at processing resolution) but
+  synchronizes the GPU in Chrome and was measurably slower there.
+- `?cameraPath=<path>` forces one path for on-device diagnosis; a forced path
+  is never abandoned on an orientation mismatch.
+
+Verified in headless Chrome on a real Intel GPU: all four rotations recovered
+(r=0.998), and the exact partial-copy layout from the phone report is rejected
+with "44% of the camera frame is missing".
+
+### FPS
+
+Two scheduling bugs, independent of model cost:
+
+1. Inference ran on every camera frame even when all readback slots were busy;
+   the renderer then dropped the result. The GPU spent most of its time on
+   frames that were never displayed, and latency grew to ~1 s. Now
+   `Canvas2DRenderer.ready` (fewer than two frames awaiting display) gates
+   `processFrame`; overload skips camera frames before any GPU work.
+2. `SIDPipeline.process()` awaited the histogram readback, which waits for the
+   whole GPU queue. That was the gap between the stage sum and `total`. Stats
+   are now a promise consumed asynchronously by auto gain.
+
+A/B with an iPhone UA and a fake camera on the Intel iGPU, same session:
+original build displayed 1.9–2.8 FPS (readback 740–960 ms) while its
+"processed" counter claimed 11–15 FPS; the fix displayed 8–14 FPS (readback
+120–220 ms) with processed == displayed. These are desktop numbers, not iPhone
+numbers.
+
+Stage timings in the overlay are CPU submission times. True GPU cost is visible
+as `displayed` FPS (≈ GPU throughput now) and `readback` (≈ 2 × GPU frame
+time). ORT kernel profiling at 180p on the Intel iGPU: adapter ≈ 20 ms GPU
+(seven 64→64 3×3 convs at 96×160 ≈ 4 GMAC, more than SID), SID ≈ 58 ms
+(Conv2DMatMul 50 ms, ConvTranspose 3.7 ms, Concat 3.2 ms). Further FPS on the
+phone therefore mostly requires a cheaper adapter/SID, not pipeline changes.
+
+The earlier working tree was clean when the original handoff was written, and
+`50de041` was reviewed by a second agent. The follow-up has not had a
+second-agent review.
 
 ## What the user wants
 
@@ -232,9 +292,10 @@ Only a physical Safari/WebGPU run can close the remaining platform risk.
 
 ## First action for the next agent
 
-Ask the user to open:
-
-`https://onetensor.github.io/nvg/?v=50de041`
+Ask the user to open the cache-busted build of the latest deployed commit
+(`https://onetensor.github.io/nvg/?v=<commit>`). In addition to the fields
+below, the console line `<path> orientation: …` (or `… rejected: …`) shows
+which camera path was chosen and why.
 
 They should fully close the old tab first to prevent an old module graph from
 remaining in memory. Have them enable Debug and provide either a screenshot or
@@ -461,6 +522,8 @@ production FP16-only selection. Do not manually add all tracked graphs to
 - Do not silently fall back to CPU/WASM while claiming WebGPU execution.
 - Do not deploy unvalidated/random weights.
 - Do not restore per-frame `queue.onSubmittedWorkDone()` on iPhone.
+- Do not start inference while `SIDPipeline.ready` is false, and do not await
+  histogram statistics inside a frame; both serialize or waste GPU work.
 - Do not close a `GPUExternalTexture`-backing `VideoFrame` early if the code is
   changed back to external-texture import; the current code avoids this lifetime
   problem by copying into a regular texture.

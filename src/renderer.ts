@@ -17,6 +17,9 @@ class RollingAverage {
   get value(): number { return this.values.length ? this.total / this.values.length : 0; }
 }
 
+// Two frames keep the GPU fed (one executing, one queued) at two frames of latency.
+const MAX_FRAMES_IN_FLIGHT = 2;
+
 interface ReadbackSlot {
   buffer: GPUBuffer;
   busy: boolean;
@@ -130,6 +133,18 @@ export class Canvas2DRenderer {
     const sequence = ++this.sequence;
     void this.present(slot, byteLength, geometry.width, geometry.height, sequence, performance.now());
     return this.lastStats;
+  }
+
+  /**
+   * Whether another frame may enter the GPU pipeline. Busy slots track frames
+   * whose GPU work has not completed, so this bounds queued work and latency
+   * without a blocking wait. Starting inference while every slot is busy only
+   * queues GPU work whose result is then thrown away.
+   */
+  get ready(): boolean {
+    let busy = 0;
+    for (const slot of this.slots) if (slot.busy) busy += 1;
+    return busy < MAX_FRAMES_IN_FLIGHT;
   }
 
   get presentation(): PresentationStats {

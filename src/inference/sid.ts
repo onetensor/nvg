@@ -44,6 +44,8 @@ export class SIDPipeline {
   get backendName(): string { return this.sid.name; }
   get fp16Available(): boolean { return this.device?.features.has('shader-f16') ?? false; }
   get learnedAdapterAvailable(): boolean { return this.adapter !== null; }
+  /** False while the GPU still owes the maximum number of undisplayed frames. */
+  get ready(): boolean { return !this.cpuDisplay || !this.initialized || this.canvas2dRenderer.ready; }
 
   async initialize(report?: (message: string) => void): Promise<void> {
     report?.('Loading selected joint SID model (1/2)…');
@@ -118,7 +120,9 @@ export class SIDPipeline {
         await this.device.queue.onSubmittedWorkDone();
       }
       const postprocess = performance.now() - postStart;
-      const stats = prepared.stats ? await prepared.stats : undefined;
+      // Do not await the histogram here: mapping it waits for every queued GPU
+      // frame, which was the unaccounted time in `total`.
+      const stats = prepared.stats;
 
       return {
         timing: {

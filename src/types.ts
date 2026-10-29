@@ -97,7 +97,8 @@ export interface TimingSample {
 
 export interface PipelineResult {
   timing: TimingSample;
-  stats?: LuminanceStats;
+  /** Resolves once the GPU reaches this frame; never awaited per frame. */
+  stats?: Promise<LuminanceStats>;
   outputStats?: OutputStats;
   cameraInputPath: CameraInputPath;
   presentation?: PresentationStats;

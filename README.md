@@ -239,15 +239,22 @@ asynchronous readback ring, and drawn through Canvas2D to avoid the iOS WebGPU
 canvas invisibility/flicker bug. The readback no longer blocks inference, and
 the iPhone path copies each frame into a reusable `rgba8unorm` GPU texture with
 `copyExternalImageToTexture()` because WebKit may return black samples for
-camera-backed `GPUExternalTexture`s. The first copy is checked through a WebGPU
-validation scope, and an exact-zero input probe automatically falls back through
-video, `VideoFrame`, and Canvas2D copy sources. This adds one camera upload but
-avoids external-texture lifetime stalls and fails explicitly if all three paths
-are black. A one-pixel visible camera edge prevents fully occluded video from
-being throttled. Histogram readback runs once
-per 30 processed frames, temporal filtering defaults Off, and the frame pump
-keeps at most one inference in flight so overload drops frames instead of
-building latency.
+camera-backed `GPUExternalTexture`s. WebKit's direct media copies can deliver
+the unrotated landscape sensor buffer behind a portrait `<video>`, so the copy
+uses the buffer size reported by a short-lived `VideoFrame`, and at startup a
+16×16 GPU thumbnail of the copied buffer is correlated against an upright
+Canvas2D `drawImage` reference at all four quarter turns. The best match sets
+the shader's rotation; a copy that does not match (for example, one that leaves
+part of the frame black) is rejected. The first copy is also checked through a
+WebGPU validation scope, and the input falls back through video, `VideoFrame`,
+and finally Canvas2D copy sources (correct by construction, but it synchronizes
+the GPU), failing explicitly if all three paths are black. `?cameraPath=` forces
+one path for diagnosis. A one-pixel visible camera edge prevents fully occluded
+video from being throttled. Histogram readback runs once per 30 processed frames
+and is never awaited inside a frame, temporal filtering defaults Off, and a new
+frame only enters the GPU pipeline while fewer than two frames await display.
+Overload therefore skips camera frames before inference instead of queueing GPU
+work whose result would be discarded.
 
 ## Known limitations
 
