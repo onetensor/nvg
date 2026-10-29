@@ -181,10 +181,6 @@ async function initializePipeline(): Promise<void> {
   );
   await pipeline.initialize((message) => setStatus(ui, message));
   ui.model.disabled = true;
-  if (appleMobileWebKit) {
-    ui.temporal.value = 'off';
-    ui.temporal.disabled = true;
-  }
   if (useFixed360) {
     ui.resolution.disabled = true;
     ui.adapter.disabled = true;

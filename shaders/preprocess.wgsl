@@ -26,16 +26,34 @@ fn linearize(value: f32) -> f32 {
   return pow((value + 0.055) / 1.055, 2.4);
 }
 
+// Area-filtered sample of one output pixel. A single bilinear tap at 4x
+// decimation reads only a 2x2 corner of each 4x4 camera block, aliasing and
+// discarding most of the free noise averaging; this tiles the whole footprint
+// with bilinear taps (~2x2 texels each) and averages them in linear light.
 fn linear_rgb(uv: vec2f) -> vec3f {
-  let covered_uv = (uv - vec2f(0.5)) * vec2f(params.uv_scale_x, params.uv_scale_y) + vec2f(0.5);
-  let encoded = textureSampleBaseClampToEdge(camera_frame, camera_sampler, covered_uv).rgb;
-  return vec3f(linearize(encoded.r), linearize(encoded.g), linearize(encoded.b));
+  let scale = vec2f(params.uv_scale_x, params.uv_scale_y);
+  let footprint = scale / vec2f(vec2u(params.visible_width, params.visible_height));
+  let texels = vec2f(textureDimensions(camera_frame));
+  let taps = vec2u(clamp(ceil(footprint * texels * 0.5), vec2f(1.0), vec2f(4.0)));
+  let center = (uv - vec2f(0.5)) * scale + vec2f(0.5);
+  var sum = vec3f(0.0);
+  for (var j = 0u; j < taps.y; j += 1u) {
+    for (var i = 0u; i < taps.x; i += 1u) {
+      let offset = ((vec2f(vec2u(i, j)) + vec2f(0.5)) / vec2f(taps) - vec2f(0.5)) * footprint;
+      let covered = center + offset;
+      let encoded = textureSampleBaseClampToEdge(camera_frame, camera_sampler, covered).rgb;
+      sum += vec3f(linearize(encoded.r), linearize(encoded.g), linearize(encoded.b));
+    }
+  }
+  return sum / f32(taps.x * taps.y);
 }
 
 fn record_luminance(rgb: vec3f) {
   if params.collect_stats == 0u { return; }
   let luminance = dot(rgb, vec3f(0.2126, 0.7152, 0.0722));
-  let bin = u32(clamp(luminance, 0.0, 1.0) * 255.0);
+  // sqrt-spaced bins resolve the dark scenes auto gain must expose: linear
+  // 1/255-wide bins put every median below ~sRGB 13/255 into bin 0.
+  let bin = min(u32(sqrt(clamp(luminance, 0.0, 1.0)) * 255.0), 255u);
   atomicAdd(&histogram[bin], 1u);
   if all(rgb == vec3f(0.0)) { atomicAdd(&histogram[256], 1u); }
 }

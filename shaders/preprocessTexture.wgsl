@@ -19,11 +19,13 @@ struct Params {
 @group(0) @binding(3) var<uniform> params: Params;
 @group(0) @binding(4) var<storage, read_write> histogram: array<atomic<u32>, 257>;
 
-fn linearize(value: f32) -> f32 {
-  if value <= 0.04045 {
-    return value / 12.92;
+// The copied camera texture is rgba8unorm-srgb, so every sample (and the
+// bilinear filter itself) is already in linear light.
+fn srgb_encode(value: f32) -> f32 {
+  if value <= 0.0031308 {
+    return value * 12.92;
   }
-  return pow((value + 0.055) / 1.055, 2.4);
+  return 1.055 * pow(value, 1.0 / 2.4) - 0.055;
 }
 
 // Maps upright display UV to the copied buffer, which Safari may deliver as the
@@ -37,16 +39,34 @@ fn buffer_uv(uv: vec2f) -> vec2f {
   }
 }
 
+// Area-filtered sample of one output pixel. A single bilinear tap at 4x
+// decimation reads only a 2x2 corner of each 4x4 camera block, aliasing and
+// discarding most of the free noise averaging; this tiles the whole footprint
+// with bilinear taps (~2x2 texels each), all averaged in linear light.
 fn linear_rgb(uv: vec2f) -> vec3f {
-  let covered_uv = (uv - vec2f(0.5)) * vec2f(params.uv_scale_x, params.uv_scale_y) + vec2f(0.5);
-  let encoded = textureSampleLevel(camera_frame, camera_sampler, buffer_uv(covered_uv), 0.0).rgb;
-  return vec3f(linearize(encoded.r), linearize(encoded.g), linearize(encoded.b));
+  let scale = vec2f(params.uv_scale_x, params.uv_scale_y);
+  let footprint = scale / vec2f(vec2u(params.visible_width, params.visible_height));
+  var texels = vec2f(textureDimensions(camera_frame));
+  if params.quarter_turns % 2u == 1u { texels = texels.yx; }
+  let taps = vec2u(clamp(ceil(footprint * texels * 0.5), vec2f(1.0), vec2f(4.0)));
+  let center = (uv - vec2f(0.5)) * scale + vec2f(0.5);
+  var sum = vec3f(0.0);
+  for (var j = 0u; j < taps.y; j += 1u) {
+    for (var i = 0u; i < taps.x; i += 1u) {
+      let offset = ((vec2f(vec2u(i, j)) + vec2f(0.5)) / vec2f(taps) - vec2f(0.5)) * footprint;
+      let covered = center + offset;
+      sum += textureSampleLevel(camera_frame, camera_sampler, buffer_uv(covered), 0.0).rgb;
+    }
+  }
+  return sum / f32(taps.x * taps.y);
 }
 
 fn record_luminance(rgb: vec3f) {
   if params.collect_stats == 0u { return; }
   let luminance = dot(rgb, vec3f(0.2126, 0.7152, 0.0722));
-  let bin = u32(clamp(luminance, 0.0, 1.0) * 255.0);
+  // sqrt-spaced bins resolve the dark scenes auto gain must expose: linear
+  // 1/255-wide bins put every median below ~sRGB 13/255 into bin 0.
+  let bin = min(u32(sqrt(clamp(luminance, 0.0, 1.0)) * 255.0), 255u);
   atomicAdd(&histogram[bin], 1u);
   if all(rgb == vec3f(0.0)) { atomicAdd(&histogram[256], 1u); }
 }
@@ -88,7 +108,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 // Orientation calibration: 16x16 cell averages of the copied buffer in buffer
 // space (no cover crop or rotation), compared on the CPU against an upright
-// Canvas2D reference. Values stay sRGB-encoded to match getImageData().
+// Canvas2D reference. Samples are re-encoded to sRGB to match getImageData().
 @group(0) @binding(5) var<storage, read_write> thumbnail_cells: array<f32, 768>;
 
 @compute @workgroup_size(16, 16)
@@ -97,7 +117,8 @@ fn thumbnail(@builtin(local_invocation_id) lid: vec3u) {
   for (var j = 0u; j < 8u; j += 1u) {
     for (var i = 0u; i < 8u; i += 1u) {
       let uv = (vec2f(lid.xy) + (vec2f(vec2u(i, j)) + vec2f(0.5)) / 8.0) / 16.0;
-      sum += textureSampleLevel(camera_frame, camera_sampler, uv, 0.0).rgb;
+      let linear = textureSampleLevel(camera_frame, camera_sampler, uv, 0.0).rgb;
+      sum += vec3f(srgb_encode(linear.r), srgb_encode(linear.g), srgb_encode(linear.b));
     }
   }
   let cell = (lid.y * 16u + lid.x) * 3u;
