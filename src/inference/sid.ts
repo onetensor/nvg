@@ -44,6 +44,10 @@ export class SIDPipeline {
   get backendName(): string { return this.sid.name; }
   get fp16Available(): boolean { return this.device?.features.has('shader-f16') ?? false; }
   get learnedAdapterAvailable(): boolean { return this.adapter !== null; }
+  /** 12 (packed RGB) or 13 (plus noise level) for direct models. */
+  private get directChannels(): number {
+    return (this.metadata.sid as { inputChannels?: number }).inputChannels ?? 12;
+  }
   /** False while the GPU still owes the maximum number of undisplayed frames. */
   get ready(): boolean { return !this.cpuDisplay || !this.initialized || this.canvas2dRenderer.ready; }
 
@@ -75,12 +79,14 @@ export class SIDPipeline {
     const totalStart = performance.now();
 
     const preprocessStart = performance.now();
-    const prepared = await this.preprocessor.prepare(video, geometry, mode, gain);
-    this.temporal.apply(prepared.buffer, prepared.dims, temporalLevel);
+    const prepared = await this.preprocessor.prepare(video, geometry, mode, gain, this.directChannels);
+    const noisePlane = mode === 'direct' && this.directChannels === 13;
+    this.temporal.apply(prepared.buffer, prepared.dims, temporalLevel, noisePlane);
     // Direct models receive the accumulated, unamplified packed RGB; gain and
     // clipping come after accumulation so averaging sees unclipped values.
+    const plane = prepared.dims[2]! * prepared.dims[3]!;
     const modelInput = mode === 'direct'
-      ? this.gainTransform.apply(prepared.buffer, gain, prepared.dims.reduce((product, value) => product * value, 1))
+      ? this.gainTransform.apply(prepared.buffer, gain, 12 * plane, prepared.dims[1]! * plane)
       : prepared.buffer;
     const inputBackend = mode === 'learned' ? this.adapter! : this.sid;
     const input = inputBackend.tensorFromGpuBuffer(modelInput, prepared.dims);

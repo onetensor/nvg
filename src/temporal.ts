@@ -32,20 +32,26 @@ export class TemporalAccumulator {
     this.params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
-  /** Accumulates `frame` (NCHW, batch 1) in place. */
-  apply(frame: GPUBuffer, dims: readonly number[], level: TemporalLevel): void {
-    if (level === 'off') {
+  /**
+   * Accumulates `frame` (NCHW, batch 1) in place. With `noisePlane`, the last
+   * plane is not image data: it receives 1/sqrt(frames averaged) per pixel,
+   * so it is written even when accumulation is off.
+   */
+  apply(frame: GPUBuffer, dims: readonly number[], level: TemporalLevel, noisePlane = false): void {
+    if (level === 'off' && !noisePlane) {
       this.initialized = false;
       return;
     }
-    const channels = dims[1]!;
+    if (level === 'off') this.initialized = false;
+    const channels = dims[1]! - (noisePlane ? 1 : 0);
     const plane = dims[2]! * dims[3]!;
-    this.ensureBuffers(frame, channels, plane);
+    this.ensureBuffers(frame, dims[1]!, plane);
     const values = new ArrayBuffer(32);
     const view = new DataView(values);
     view.setUint32(0, plane, true);
     view.setUint32(4, channels, true);
     view.setUint32(8, this.initialized ? 1 : 0, true);
+    view.setUint32(12, noisePlane ? 1 : 0, true);
     view.setFloat32(16, MAX_FRAMES[level], true);
     view.setFloat32(20, MOTION_LOW, true);
     view.setFloat32(24, MOTION_HIGH, true);
@@ -58,7 +64,7 @@ export class TemporalAccumulator {
     pass.dispatchWorkgroups(Math.ceil(plane / 256));
     pass.end();
     this.device.queue.submit([encoder.finish()]);
-    this.initialized = true;
+    this.initialized = level !== 'off';
   }
 
   reset(): void {

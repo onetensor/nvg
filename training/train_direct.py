@@ -15,9 +15,9 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from training.dataset import AdapterDataset
-from training.phone_sim import PhoneSimDataset, degrade_batch
+from training.phone_sim import BurstDataset, PhoneSimDataset, collate_list, degrade_batch, degrade_bursts
 from training.losses import charbonnier, psnr, ssim
-from training.sid_model import SIDUNet, direct_from_bayer, load_sid, packed_linear_rgb
+from training.sid_model import SIDUNet, add_noise_level_input, direct_from_bayer, direct_input, load_sid
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,6 +27,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--init-sid", help="4-channel SID checkpoint to warm-start a width-32 model")
+    parser.add_argument("--init-direct", help="Direct checkpoint to warm-start from (12-channel ones gain a zero-weight noise plane)")
+    parser.add_argument("--in-channels", type=int, choices=(12, 13), default=12,
+                        help="13 adds a 1/sqrt(frames averaged) noise-level plane")
+    parser.add_argument("--lpips-weight", type=float, default=0.0)
     parser.add_argument("--width", type=int, default=32)
     parser.add_argument("--teacher", help="Direct (12-channel) checkpoint to distill from")
     parser.add_argument("--teacher-weight", type=float, default=0.5)
@@ -35,9 +39,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patch-size", type=int, default=512)
     parser.add_argument(
         "--protocol",
-        choices=("phone", "legacy"),
+        choices=("burst", "phone", "legacy"),
         default="phone",
-        help="phone: simulated iPhone video with runtime auto gain; legacy: dark ISP input with oracle gain",
+        help="burst: simulated iPhone video with runtime accumulation of real SID bursts; "
+             "phone: single simulated frames; legacy: dark ISP input with oracle gain",
     )
     parser.add_argument("--output-size", type=int, default=256, help="Model input size for --protocol phone")
     parser.add_argument("--learning-rate", type=float, default=3e-5)
@@ -56,6 +61,15 @@ def worker_init(_: int) -> None:
 
 
 def build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
+    if args.init_direct:
+        source = load_sid(args.init_direct)
+        if source.in_channels == 12 and args.in_channels == 13:
+            source = add_noise_level_input(source)
+        if source.in_channels != args.in_channels or source.width != args.width:
+            raise ValueError("--init-direct does not match --in-channels/--width")
+        return source.to(device)
+    if args.in_channels != 12:
+        raise ValueError("A 13-channel model needs --init-direct")
     if args.init_sid:
         source = load_sid(args.init_sid)
         if source.width != args.width:
@@ -64,32 +78,45 @@ def build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
     return SIDUNet(in_channels=12, width=args.width).to(device)
 
 
-Prepare = Callable[[dict[str, torch.Tensor], bool], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+Prepared = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]
+Prepare = Callable[..., Prepared]
+
+# Burst validation: a clean single frame and a noisier 4-frame accumulation.
+BURST_VALIDATION = ({"name": "f1", "frames": 1, "extra_noise": 0.0}, {"name": "f4n6", "frames": 4, "extra_noise": 6.0})
 
 
 def batch_preparer(args: argparse.Namespace, device: torch.device) -> Prepare:
-    """(inputs, targets, gain[B,1,1,1]) for a loader batch; the phone protocol degrades on the GPU."""
-    def prepare(batch: dict[str, torch.Tensor], augment: bool) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if args.protocol == "phone":
+    """(inputs, targets, gain[B,1,1,1], frame counts or None) for a loader batch."""
+    def prepare(batch, augment: bool, extra_noise: float | None = None) -> Prepared:
+        counts = None
+        if args.protocol == "burst":
+            inputs, targets, gain, counts = degrade_bursts(batch, device, augment, extra_noise)
+        elif args.protocol == "phone":
             inputs, targets, gain = degrade_batch(batch, device, args.output_size, augment)
         else:
             inputs = batch["input"].to(device, non_blocking=True)
             targets = batch["target"].to(device, non_blocking=True)
             gain = batch["gain"].to(device, non_blocking=True)
-        return inputs, targets, gain[:, None, None, None]
+        return inputs, targets, gain[:, None, None, None], counts
     return prepare
 
 
 @torch.no_grad()
-def validate(model: SIDUNet, loader: DataLoader, device: torch.device, prepare: Prepare) -> dict[str, float]:
+def validate(
+    model: SIDUNet,
+    loader: DataLoader,
+    device: torch.device,
+    prepare: Prepare,
+    extra_noise: float | None = None,
+) -> dict[str, float]:
     model.eval()
     total_psnr = 0.0
     total_ssim = 0.0
     samples = 0
     for batch in loader:
-        inputs, targets, gain = prepare(batch, False)
+        inputs, targets, gain, counts = prepare(batch, False, extra_noise)
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
-            prediction = model(packed_linear_rgb(inputs, gain)).float().clamp(0, 1)
+            prediction = model(direct_input(model, inputs, gain, counts)).float().clamp(0, 1)
         for index in range(prediction.shape[0]):
             total_psnr += psnr(prediction[index:index + 1], targets[index:index + 1]).item()
             total_ssim += ssim(prediction[index:index + 1], targets[index:index + 1]).item()
@@ -116,8 +143,8 @@ def main() -> None:
     teacher = None
     if args.teacher:
         teacher = load_sid(args.teacher, device).eval().requires_grad_(False)
-        if teacher.in_channels != 12:
-            raise ValueError("The teacher must be a direct 12-channel model")
+        if teacher.in_channels not in (12, 13):
+            raise ValueError("The teacher must be a direct model")
         teacher = teacher.to(memory_format=torch.channels_last)
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.99), weight_decay=1e-5)
@@ -129,7 +156,16 @@ def main() -> None:
         return 0.02 + 0.98 * 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
 
     scheduler = LambdaLR(optimizer, schedule)
-    if args.protocol == "phone":
+    perceptual = None
+    if args.lpips_weight > 0:
+        import lpips
+        perceptual = lpips.LPIPS(net="vgg", verbose=False).to(device).eval().requires_grad_(False)
+    collate = None
+    val_loaders: list[tuple[str, DataLoader, float | None]] = []
+    if args.protocol == "burst":
+        train_data = BurstDataset(args.data, "train", args.output_size, augment=True)
+        collate = collate_list
+    elif args.protocol == "phone":
         train_data = PhoneSimDataset(args.data, "train", augment=True)
         val_data = PhoneSimDataset(args.data, "val", augment=False)
     else:
@@ -145,15 +181,32 @@ def main() -> None:
         drop_last=True,
         worker_init_fn=worker_init,
         prefetch_factor=4 if args.workers > 0 else None,
+        collate_fn=collate,
     )
-    val_loader = DataLoader(
-        val_data,
-        batch_size=4,
-        shuffle=False,
-        num_workers=min(args.workers, 8),
-        pin_memory=True,
-        worker_init_fn=worker_init,
-    )
+
+    def evaluation_loader(dataset) -> DataLoader:
+        return DataLoader(dataset, batch_size=4, shuffle=False, num_workers=min(args.workers, 8),
+                          pin_memory=True, worker_init_fn=worker_init, collate_fn=collate)
+
+    if args.protocol == "burst":
+        for config in BURST_VALIDATION:
+            dataset = BurstDataset(args.data, "val", args.output_size, augment=False, eval_frames=config["frames"])
+            val_loaders.append((config["name"], evaluation_loader(dataset), config["extra_noise"]))
+    else:
+        val_loaders.append(("val", evaluation_loader(val_data), None))
+
+    def validate_all() -> dict[str, float]:
+        reports = {name: validate(model, loader, device, prepare, noise) for name, loader, noise in val_loaders}
+        if len(reports) == 1:
+            return next(iter(reports.values()))
+        merged: dict[str, float] = {
+            "psnr": sum(report["psnr"] for report in reports.values()) / len(reports),
+            "ssim": sum(report["ssim"] for report in reports.values()) / len(reports),
+        }
+        for name, report in reports.items():
+            merged[f"{name}_psnr"] = report["psnr"]
+            merged[f"{name}_ssim"] = report["ssim"]
+        return merged
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
     prepare = batch_preparer(args, device)
     log_path = output / "metrics.jsonl"
@@ -163,7 +216,7 @@ def main() -> None:
         torch.save(
             {
                 "state_dict": model.state_dict(),
-                "in_channels": 12,
+                "in_channels": model.in_channels,
                 "width": args.width,
                 "input": "packed_linear_rgb",
                 "protocol": args.protocol,
@@ -175,7 +228,7 @@ def main() -> None:
             output / f"direct-{stem}.pt",
         )
 
-    initial = {"step": 0, **validate(model, val_loader, device, prepare), "best": True}
+    initial = {"step": 0, **validate_all(), "best": True}
     best_score = initial["psnr"] + 10.0 * initial["ssim"]
     save("best", 0, initial)
     with log_path.open("w") as stream:
@@ -189,19 +242,25 @@ def main() -> None:
         except StopIteration:
             iterator = iter(train_loader)
             batch = next(iterator)
-        inputs, targets, gain = prepare(batch, True)
-        packed = packed_linear_rgb(inputs, gain).contiguous(memory_format=torch.channels_last)
+        inputs, targets, gain, counts = prepare(batch, True)
+        packed = direct_input(model, inputs, gain, counts).contiguous(memory_format=torch.channels_last)
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             prediction = model(packed).float()
             target_loss = charbonnier(prediction, targets) + 0.2 * (1 - ssim(prediction, targets))
             if teacher is not None:
                 with torch.no_grad():
-                    reference = teacher(packed).float().clamp(0, 1)
+                    teacher_input = direct_input(teacher, inputs, gain, counts).contiguous(
+                        memory_format=torch.channels_last)
+                    reference = teacher(teacher_input).float().clamp(0, 1)
                 teacher_loss = charbonnier(prediction, reference)
             else:
                 teacher_loss = target_loss.new_zeros(())
-            loss = target_loss + args.teacher_weight * teacher_loss
+        perceptual_loss = (
+            perceptual(prediction.clamp(0, 1) * 2 - 1, targets * 2 - 1).mean()
+            if perceptual is not None else target_loss.new_zeros(())
+        )
+        loss = target_loss + args.teacher_weight * teacher_loss + args.lpips_weight * perceptual_loss
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -213,6 +272,7 @@ def main() -> None:
                 "loss": loss.item(),
                 "target_loss": target_loss.item(),
                 "teacher_loss": teacher_loss.item(),
+                "lpips_loss": perceptual_loss.item(),
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "elapsed_s": round(time.time() - started, 1),
                 "steps_per_s": round(step / (time.time() - started), 2),
@@ -223,7 +283,7 @@ def main() -> None:
             print(json.dumps(record), flush=True)
 
         if step % args.validate_every == 0 or step == args.steps:
-            report = {"step": step, **validate(model, val_loader, device, prepare)}
+            report = {"step": step, **validate_all()}
             score = report["psnr"] + 10.0 * report["ssim"]
             if score > best_score:
                 best_score = score

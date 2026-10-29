@@ -2,7 +2,9 @@ struct Params {
   plane: u32,
   channels: u32,
   initialized: u32,
-  _pad0: u32,
+  // Non-zero: write 1/sqrt(frames averaged) to the plane after `channels`,
+  // the noise-level input of 13-channel direct models.
+  noise_plane: u32,
   max_frames: f32,
   motion_low: f32,
   motion_high: f32,
@@ -28,6 +30,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       history[c * params.plane + i] = frame[c * params.plane + i];
     }
     frames[i] = 1.0;
+    if params.noise_plane != 0u { frame[params.channels * params.plane + i] = 1.0; }
     return;
   }
 
@@ -48,4 +51,5 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     frame[index] = value;
   }
   frames[i] = count;
+  if params.noise_plane != 0u { frame[params.channels * params.plane + i] = inverseSqrt(count); }
 }
