@@ -6,33 +6,41 @@ from torch.nn import functional as F
 
 
 class SIDUNet(nn.Module):
-    """NCHW equivalent of the official Sony SID TensorFlow network."""
+    """NCHW equivalent of the official Sony SID TensorFlow network.
 
-    def __init__(self) -> None:
+    The defaults (4 packed Bayer channels, base width 32) are the official
+    architecture. ``in_channels=12`` accepts 2x2-packed linear RGB directly, and
+    a smaller ``width`` scales every level uniformly.
+    """
+
+    def __init__(self, in_channels: int = 4, width: int = 32) -> None:
         super().__init__()
-        self.conv1_1 = nn.Conv2d(4, 32, 3, padding=1)
-        self.conv1_2 = nn.Conv2d(32, 32, 3, padding=1)
-        self.conv2_1 = nn.Conv2d(32, 64, 3, padding=1)
-        self.conv2_2 = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv3_1 = nn.Conv2d(64, 128, 3, padding=1)
-        self.conv3_2 = nn.Conv2d(128, 128, 3, padding=1)
-        self.conv4_1 = nn.Conv2d(128, 256, 3, padding=1)
-        self.conv4_2 = nn.Conv2d(256, 256, 3, padding=1)
-        self.conv5_1 = nn.Conv2d(256, 512, 3, padding=1)
-        self.conv5_2 = nn.Conv2d(512, 512, 3, padding=1)
-        self.up6 = nn.ConvTranspose2d(512, 256, 2, stride=2, bias=False)
-        self.conv6_1 = nn.Conv2d(512, 256, 3, padding=1)
-        self.conv6_2 = nn.Conv2d(256, 256, 3, padding=1)
-        self.up7 = nn.ConvTranspose2d(256, 128, 2, stride=2, bias=False)
-        self.conv7_1 = nn.Conv2d(256, 128, 3, padding=1)
-        self.conv7_2 = nn.Conv2d(128, 128, 3, padding=1)
-        self.up8 = nn.ConvTranspose2d(128, 64, 2, stride=2, bias=False)
-        self.conv8_1 = nn.Conv2d(128, 64, 3, padding=1)
-        self.conv8_2 = nn.Conv2d(64, 64, 3, padding=1)
-        self.up9 = nn.ConvTranspose2d(64, 32, 2, stride=2, bias=False)
-        self.conv9_1 = nn.Conv2d(64, 32, 3, padding=1)
-        self.conv9_2 = nn.Conv2d(32, 32, 3, padding=1)
-        self.conv10 = nn.Conv2d(32, 12, 1)
+        self.in_channels = in_channels
+        self.width = width
+        c1, c2, c3, c4, c5 = (width * factor for factor in (1, 2, 4, 8, 16))
+        self.conv1_1 = nn.Conv2d(in_channels, c1, 3, padding=1)
+        self.conv1_2 = nn.Conv2d(c1, c1, 3, padding=1)
+        self.conv2_1 = nn.Conv2d(c1, c2, 3, padding=1)
+        self.conv2_2 = nn.Conv2d(c2, c2, 3, padding=1)
+        self.conv3_1 = nn.Conv2d(c2, c3, 3, padding=1)
+        self.conv3_2 = nn.Conv2d(c3, c3, 3, padding=1)
+        self.conv4_1 = nn.Conv2d(c3, c4, 3, padding=1)
+        self.conv4_2 = nn.Conv2d(c4, c4, 3, padding=1)
+        self.conv5_1 = nn.Conv2d(c4, c5, 3, padding=1)
+        self.conv5_2 = nn.Conv2d(c5, c5, 3, padding=1)
+        self.up6 = nn.ConvTranspose2d(c5, c4, 2, stride=2, bias=False)
+        self.conv6_1 = nn.Conv2d(c5, c4, 3, padding=1)
+        self.conv6_2 = nn.Conv2d(c4, c4, 3, padding=1)
+        self.up7 = nn.ConvTranspose2d(c4, c3, 2, stride=2, bias=False)
+        self.conv7_1 = nn.Conv2d(c4, c3, 3, padding=1)
+        self.conv7_2 = nn.Conv2d(c3, c3, 3, padding=1)
+        self.up8 = nn.ConvTranspose2d(c3, c2, 2, stride=2, bias=False)
+        self.conv8_1 = nn.Conv2d(c3, c2, 3, padding=1)
+        self.conv8_2 = nn.Conv2d(c2, c2, 3, padding=1)
+        self.up9 = nn.ConvTranspose2d(c2, c1, 2, stride=2, bias=False)
+        self.conv9_1 = nn.Conv2d(c2, c1, 3, padding=1)
+        self.conv9_2 = nn.Conv2d(c1, c1, 3, padding=1)
+        self.conv10 = nn.Conv2d(c1, 12, 1)
 
     @staticmethod
     def activate(value: torch.Tensor) -> torch.Tensor:
@@ -62,7 +70,35 @@ class SIDUNet(nn.Module):
 
 def load_sid(path: str, device: torch.device | str = "cpu") -> SIDUNet:
     payload = torch.load(path, map_location=device, weights_only=False)
-    state = payload["state_dict"] if isinstance(payload, dict) and "state_dict" in payload else payload
-    model = SIDUNet().to(device)
+    wrapped = isinstance(payload, dict) and "state_dict" in payload
+    state = payload["state_dict"] if wrapped else payload
+    model = SIDUNet(
+        in_channels=int(payload.get("in_channels", 4)) if wrapped else 4,
+        width=int(payload.get("width", 32)) if wrapped else 32,
+    ).to(device)
+    model.load_state_dict(state, strict=True)
+    return model
+
+
+# PixelUnshuffle(2) emits channel-major (00, 01, 10, 11) planes, so the
+# deterministic RGGB baseline (R00, G01, B11, G10) is these packed channels.
+PSEUDO_BAYER_CHANNELS = (0, 5, 11, 6)
+
+
+def packed_linear_rgb(linear_rgb: torch.Tensor, gain: torch.Tensor | float) -> torch.Tensor:
+    """Runtime input for direct models: 2x2-packed linear RGB, amplified and clipped."""
+    return (F.pixel_unshuffle(linear_rgb, 2) * gain).clamp(0, 1)
+
+
+def direct_from_bayer(source: SIDUNet) -> SIDUNet:
+    """A 12-channel SID that initially reproduces ``source`` on the deterministic pseudo-Bayer input."""
+    if source.in_channels != 4:
+        raise ValueError("Source SID must take 4 packed Bayer channels")
+    model = SIDUNet(in_channels=12, width=source.width)
+    state = {key: value.clone() for key, value in source.state_dict().items()}
+    weight = torch.zeros(source.width, 12, 3, 3, dtype=state["conv1_1.weight"].dtype)
+    for bayer_channel, packed_channel in enumerate(PSEUDO_BAYER_CHANNELS):
+        weight[:, packed_channel] = state["conv1_1.weight"][:, bayer_channel]
+    state["conv1_1.weight"] = weight
     model.load_state_dict(state, strict=True)
     return model

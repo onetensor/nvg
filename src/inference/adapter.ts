@@ -1,5 +1,4 @@
 import gainShader from '../../shaders/gain.wgsl?raw';
-import type { InferenceTensor } from './backend';
 
 const aligned = (bytes: number): number => Math.ceil(bytes / 16) * 16;
 
@@ -20,19 +19,19 @@ export class PseudoRawGain {
     this.params = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
-  apply(input: InferenceTensor, gain: number, count: number): GPUBuffer {
-    if (input.location !== 'gpu-buffer') throw new Error('Adapter output is not GPU-resident.');
+  /** Amplifies and clips the first `count` floats of `input` into a reused buffer. */
+  apply(input: GPUBuffer, gain: number, count: number): GPUBuffer {
     this.ensureOutput(count * 4);
     const values = new ArrayBuffer(16);
     new DataView(values).setUint32(0, count, true);
     new DataView(values).setFloat32(4, gain, true);
     this.device.queue.writeBuffer(this.params, 0, values);
-    if (!this.bindGroup || this.source !== input.gpuBuffer) {
-      this.source = input.gpuBuffer;
+    if (!this.bindGroup || this.source !== input) {
+      this.source = input;
       this.bindGroup = this.device.createBindGroup({
         layout: this.pipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: { buffer: input.gpuBuffer } },
+          { binding: 0, resource: { buffer: input } },
           { binding: 1, resource: { buffer: this.output! } },
           { binding: 2, resource: { buffer: this.params } },
         ],

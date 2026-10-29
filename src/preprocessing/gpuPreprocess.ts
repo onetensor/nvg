@@ -153,7 +153,7 @@ export class GPUPreprocessor {
     const learned = mode === 'learned';
     const width = learned ? geometry.paddedWidth : geometry.rawWidth;
     const height = learned ? geometry.paddedHeight : geometry.rawHeight;
-    const channels = learned ? 3 : 4;
+    const channels = learned ? 3 : mode === 'direct' ? 12 : 4;
     const count = width * height * channels;
     this.ensureOutput(count * 4);
 
@@ -176,7 +176,7 @@ export class GPUPreprocessor {
     view.setUint32(4, height, true);
     view.setUint32(8, geometry.width, true);
     view.setUint32(12, geometry.height, true);
-    view.setUint32(16, learned ? 0 : 1, true);
+    view.setUint32(16, learned ? 0 : mode === 'direct' ? 2 : 1, true);
     view.setUint32(20, collectStats ? 1 : 0, true);
     view.setFloat32(24, gain, true);
     view.setUint32(28, camera.quarterTurns, true);

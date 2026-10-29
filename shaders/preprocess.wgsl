@@ -78,7 +78,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
 
-  // Deterministic RGGB baseline. Each invocation emits one packed Bayer cell.
+  // Packed modes: each invocation covers one 2x2 cell of the padded frame.
   let visible = vec2f(vec2u(params.visible_width, params.visible_height));
   let padded = vec2f(vec2u(params.out_width * 2u, params.out_height * 2u));
   let crop = (padded - visible) * 0.5;
@@ -87,10 +87,23 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let p01 = linear_rgb((base + vec2f(1.5, 0.5)) / visible);
   let p10 = linear_rgb((base + vec2f(0.5, 1.5)) / visible);
   let p11 = linear_rgb((base + vec2f(1.5, 1.5)) / visible);
+  record_luminance((p00 + p01 + p10 + p11) * 0.25);
 
+  if params.mode == 2u {
+    // Direct models: PixelUnshuffle(2) layout, channel-major then (00, 01, 10, 11).
+    // Gain is applied after temporal accumulation, so values stay unamplified.
+    var cells = array<vec3f, 4>(p00, p01, p10, p11);
+    for (var k = 0u; k < 4u; k += 1u) {
+      output[k * plane + index] = cells[k].r;
+      output[(4u + k) * plane + index] = cells[k].g;
+      output[(8u + k) * plane + index] = cells[k].b;
+    }
+    return;
+  }
+
+  // Deterministic RGGB baseline (R00, G01, B11, G10), amplified here.
   output[index] = clamp(p00.r * params.gain, 0.0, 1.0);
   output[plane + index] = clamp(p01.g * params.gain, 0.0, 1.0);
   output[2u * plane + index] = clamp(p11.b * params.gain, 0.0, 1.0);
   output[3u * plane + index] = clamp(p10.g * params.gain, 0.0, 1.0);
-  record_luminance((p00 + p01 + p10 + p11) * 0.25);
 }

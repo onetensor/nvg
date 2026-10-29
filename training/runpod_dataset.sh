@@ -6,6 +6,8 @@ ARCHIVE="/workspace/Sony2025.zip"
 OFFICIAL_URL="https://storage.googleapis.com/isl-datasets/SID/Sony2025.zip"
 EXPECTED_ARW=2928
 
+# find on a missing directory would abort the script under pipefail.
+mkdir -p "${DATA_DIR}"
 current="$(find "${DATA_DIR}" -type f -iname '*.ARW' 2>/dev/null | wc -l)"
 if [[ "${current}" -eq "${EXPECTED_ARW}" ]]; then
   echo "OFFICIAL_DATASET_ALREADY_PRESENT arw_files=${current}"

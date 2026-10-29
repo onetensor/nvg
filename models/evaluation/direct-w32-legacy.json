@@ -1,0 +1,719 @@
+{
+  "summary": {
+    "split": "test",
+    "protocol": "legacy",
+    "samples": 100,
+    "baseline_joint": {
+      "psnr": 19.080461816787718,
+      "ssim": 0.6019342999905348
+    },
+    "w32": {
+      "psnr": 19.59415861129761,
+      "ssim": 0.6485733513534069,
+      "parameters": 7762572,
+      "width": 32
+    }
+  },
+  "samples": [
+    {
+      "index": 0,
+      "baseline_joint_psnr": 19.410192489624023,
+      "baseline_joint_ssim": 0.5326423048973083,
+      "w32_psnr": 23.546354293823242,
+      "w32_ssim": 0.7474937438964844
+    },
+    {
+      "index": 1,
+      "baseline_joint_psnr": 19.40903091430664,
+      "baseline_joint_ssim": 0.5328329801559448,
+      "w32_psnr": 23.38332748413086,
+      "w32_ssim": 0.7434583902359009
+    },
+    {
+      "index": 2,
+      "baseline_joint_psnr": 22.541160583496094,
+      "baseline_joint_ssim": 0.6242935657501221,
+      "w32_psnr": 22.891860961914062,
+      "w32_ssim": 0.79248046875
+    },
+    {
+      "index": 3,
+      "baseline_joint_psnr": 24.26620101928711,
+      "baseline_joint_ssim": 0.829122006893158,
+      "w32_psnr": 17.414718627929688,
+      "w32_ssim": 0.7787815928459167
+    },
+    {
+      "index": 4,
+      "baseline_joint_psnr": 24.207813262939453,
+      "baseline_joint_ssim": 0.8281280398368835,
+      "w32_psnr": 17.561323165893555,
+      "w32_ssim": 0.7828062772750854
+    },
+    {
+      "index": 5,
+      "baseline_joint_psnr": 24.91096305847168,
+      "baseline_joint_ssim": 0.8018267154693604,
+      "w32_psnr": 25.772111892700195,
+      "w32_ssim": 0.8724147081375122
+    },
+    {
+      "index": 6,
+      "baseline_joint_psnr": 24.954652786254883,
+      "baseline_joint_ssim": 0.8020342588424683,
+      "w32_psnr": 25.1978702545166,
+      "w32_ssim": 0.8660351634025574
+    },
+    {
+      "index": 7,
+      "baseline_joint_psnr": 27.030864715576172,
+      "baseline_joint_ssim": 0.8926030993461609,
+      "w32_psnr": 23.80414581298828,
+      "w32_ssim": 0.870091438293457
+    },
+    {
+      "index": 8,
+      "baseline_joint_psnr": 27.064102172851562,
+      "baseline_joint_ssim": 0.8932287096977234,
+      "w32_psnr": 23.667022705078125,
+      "w32_ssim": 0.8671781420707703
+    },
+    {
+      "index": 9,
+      "baseline_joint_psnr": 24.876407623291016,
+      "baseline_joint_ssim": 0.7378892302513123,
+      "w32_psnr": 24.479583740234375,
+      "w32_ssim": 0.8251171112060547
+    },
+    {
+      "index": 10,
+      "baseline_joint_psnr": 24.889835357666016,
+      "baseline_joint_ssim": 0.7383708357810974,
+      "w32_psnr": 23.836647033691406,
+      "w32_ssim": 0.8158438205718994
+    },
+    {
+      "index": 11,
+      "baseline_joint_psnr": 18.842880249023438,
+      "baseline_joint_ssim": 0.7721313238143921,
+      "w32_psnr": 22.10512924194336,
+      "w32_ssim": 0.8854972720146179
+    },
+    {
+      "index": 12,
+      "baseline_joint_psnr": 18.87417984008789,
+      "baseline_joint_ssim": 0.7720955610275269,
+      "w32_psnr": 22.121246337890625,
+      "w32_ssim": 0.883601188659668
+    },
+    {
+      "index": 13,
+      "baseline_joint_psnr": 19.87605857849121,
+      "baseline_joint_ssim": 0.8517870903015137,
+      "w32_psnr": 26.819990158081055,
+      "w32_ssim": 0.9417197108268738
+    },
+    {
+      "index": 14,
+      "baseline_joint_psnr": 19.836984634399414,
+      "baseline_joint_ssim": 0.8503315448760986,
+      "w32_psnr": 26.500932693481445,
+      "w32_ssim": 0.9414691925048828
+    },
+    {
+      "index": 15,
+      "baseline_joint_psnr": 18.878976821899414,
+      "baseline_joint_ssim": 0.5910612344741821,
+      "w32_psnr": 19.95207405090332,
+      "w32_ssim": 0.5490593910217285
+    },
+    {
+      "index": 16,
+      "baseline_joint_psnr": 18.916545867919922,
+      "baseline_joint_ssim": 0.5906084775924683,
+      "w32_psnr": 19.930858612060547,
+      "w32_ssim": 0.5497227311134338
+    },
+    {
+      "index": 17,
+      "baseline_joint_psnr": 25.681936264038086,
+      "baseline_joint_ssim": 0.815569281578064,
+      "w32_psnr": 14.54887866973877,
+      "w32_ssim": 0.6215423345565796
+    },
+    {
+      "index": 18,
+      "baseline_joint_psnr": 25.67038345336914,
+      "baseline_joint_ssim": 0.8160232901573181,
+      "w32_psnr": 14.435385704040527,
+      "w32_ssim": 0.618416965007782
+    },
+    {
+      "index": 19,
+      "baseline_joint_psnr": 17.31880760192871,
+      "baseline_joint_ssim": 0.722460150718689,
+      "w32_psnr": 26.30548095703125,
+      "w32_ssim": 0.8839399218559265
+    },
+    {
+      "index": 20,
+      "baseline_joint_psnr": 17.356109619140625,
+      "baseline_joint_ssim": 0.7227652072906494,
+      "w32_psnr": 26.099565505981445,
+      "w32_ssim": 0.883028507232666
+    },
+    {
+      "index": 21,
+      "baseline_joint_psnr": 17.95749282836914,
+      "baseline_joint_ssim": 0.5809882879257202,
+      "w32_psnr": 17.179100036621094,
+      "w32_ssim": 0.5980152487754822
+    },
+    {
+      "index": 22,
+      "baseline_joint_psnr": 17.904481887817383,
+      "baseline_joint_ssim": 0.5778582096099854,
+      "w32_psnr": 17.080596923828125,
+      "w32_ssim": 0.5904989242553711
+    },
+    {
+      "index": 23,
+      "baseline_joint_psnr": 27.318946838378906,
+      "baseline_joint_ssim": 0.9091671705245972,
+      "w32_psnr": 19.685047149658203,
+      "w32_ssim": 0.8115376830101013
+    },
+    {
+      "index": 24,
+      "baseline_joint_psnr": 27.1656436920166,
+      "baseline_joint_ssim": 0.9083971977233887,
+      "w32_psnr": 19.79088592529297,
+      "w32_ssim": 0.8125853538513184
+    },
+    {
+      "index": 25,
+      "baseline_joint_psnr": 23.085899353027344,
+      "baseline_joint_ssim": 0.7306193113327026,
+      "w32_psnr": 22.140857696533203,
+      "w32_ssim": 0.8015450239181519
+    },
+    {
+      "index": 26,
+      "baseline_joint_psnr": 23.06178855895996,
+      "baseline_joint_ssim": 0.7302306890487671,
+      "w32_psnr": 21.862335205078125,
+      "w32_ssim": 0.7962775230407715
+    },
+    {
+      "index": 27,
+      "baseline_joint_psnr": 11.470342636108398,
+      "baseline_joint_ssim": 0.7462261915206909,
+      "w32_psnr": 11.24860668182373,
+      "w32_ssim": 0.7761116027832031
+    },
+    {
+      "index": 28,
+      "baseline_joint_psnr": 11.456632614135742,
+      "baseline_joint_ssim": 0.7456507682800293,
+      "w32_psnr": 11.090187072753906,
+      "w32_ssim": 0.7694118022918701
+    },
+    {
+      "index": 29,
+      "baseline_joint_psnr": 28.297313690185547,
+      "baseline_joint_ssim": 0.9519859552383423,
+      "w32_psnr": 26.588790893554688,
+      "w32_ssim": 0.9572925567626953
+    },
+    {
+      "index": 30,
+      "baseline_joint_psnr": 28.083778381347656,
+      "baseline_joint_ssim": 0.9515860080718994,
+      "w32_psnr": 26.889150619506836,
+      "w32_ssim": 0.9584230780601501
+    },
+    {
+      "index": 31,
+      "baseline_joint_psnr": 20.054370880126953,
+      "baseline_joint_ssim": 0.6620919704437256,
+      "w32_psnr": 16.26936912536621,
+      "w32_ssim": 0.5661075115203857
+    },
+    {
+      "index": 32,
+      "baseline_joint_psnr": 19.727998733520508,
+      "baseline_joint_ssim": 0.657709002494812,
+      "w32_psnr": 16.081274032592773,
+      "w32_ssim": 0.5564886927604675
+    },
+    {
+      "index": 33,
+      "baseline_joint_psnr": 13.419819831848145,
+      "baseline_joint_ssim": 0.7720184326171875,
+      "w32_psnr": 16.36939811706543,
+      "w32_ssim": 0.8336542844772339
+    },
+    {
+      "index": 34,
+      "baseline_joint_psnr": 15.139727592468262,
+      "baseline_joint_ssim": 0.6650037169456482,
+      "w32_psnr": 15.286396980285645,
+      "w32_ssim": 0.7298833727836609
+    },
+    {
+      "index": 35,
+      "baseline_joint_psnr": 15.093515396118164,
+      "baseline_joint_ssim": 0.6654201149940491,
+      "w32_psnr": 15.533512115478516,
+      "w32_ssim": 0.7349621057510376
+    },
+    {
+      "index": 36,
+      "baseline_joint_psnr": 14.971014022827148,
+      "baseline_joint_ssim": 0.687964677810669,
+      "w32_psnr": 12.583060264587402,
+      "w32_ssim": 0.63499915599823
+    },
+    {
+      "index": 37,
+      "baseline_joint_psnr": 15.007999420166016,
+      "baseline_joint_ssim": 0.6886898875236511,
+      "w32_psnr": 12.480705261230469,
+      "w32_ssim": 0.640127420425415
+    },
+    {
+      "index": 38,
+      "baseline_joint_psnr": 15.339515686035156,
+      "baseline_joint_ssim": 0.24520349502563477,
+      "w32_psnr": 24.896663665771484,
+      "w32_ssim": 0.42573484778404236
+    },
+    {
+      "index": 39,
+      "baseline_joint_psnr": 23.011075973510742,
+      "baseline_joint_ssim": 0.611315906047821,
+      "w32_psnr": 18.568126678466797,
+      "w32_ssim": 0.5730299949645996
+    },
+    {
+      "index": 40,
+      "baseline_joint_psnr": 23.00133514404297,
+      "baseline_joint_ssim": 0.6108814477920532,
+      "w32_psnr": 19.065452575683594,
+      "w32_ssim": 0.5947321653366089
+    },
+    {
+      "index": 41,
+      "baseline_joint_psnr": 20.15292739868164,
+      "baseline_joint_ssim": 0.34950894117355347,
+      "w32_psnr": 18.603357315063477,
+      "w32_ssim": 0.5714008808135986
+    },
+    {
+      "index": 42,
+      "baseline_joint_psnr": 20.149690628051758,
+      "baseline_joint_ssim": 0.3494797646999359,
+      "w32_psnr": 18.797386169433594,
+      "w32_ssim": 0.5937014222145081
+    },
+    {
+      "index": 43,
+      "baseline_joint_psnr": 17.898481369018555,
+      "baseline_joint_ssim": 0.3012270927429199,
+      "w32_psnr": 15.900105476379395,
+      "w32_ssim": 0.4455409049987793
+    },
+    {
+      "index": 44,
+      "baseline_joint_psnr": 17.128326416015625,
+      "baseline_joint_ssim": 0.4290749430656433,
+      "w32_psnr": 18.443204879760742,
+      "w32_ssim": 0.6156226992607117
+    },
+    {
+      "index": 45,
+      "baseline_joint_psnr": 17.229084014892578,
+      "baseline_joint_ssim": 0.43021494150161743,
+      "w32_psnr": 18.567306518554688,
+      "w32_ssim": 0.616349458694458
+    },
+    {
+      "index": 46,
+      "baseline_joint_psnr": 18.214567184448242,
+      "baseline_joint_ssim": 0.6672147512435913,
+      "w32_psnr": 12.252931594848633,
+      "w32_ssim": 0.46274709701538086
+    },
+    {
+      "index": 47,
+      "baseline_joint_psnr": 18.210580825805664,
+      "baseline_joint_ssim": 0.6663169860839844,
+      "w32_psnr": 12.29021167755127,
+      "w32_ssim": 0.45455002784729004
+    },
+    {
+      "index": 48,
+      "baseline_joint_psnr": 17.216527938842773,
+      "baseline_joint_ssim": 0.5322760939598083,
+      "w32_psnr": 11.574499130249023,
+      "w32_ssim": 0.4107442796230316
+    },
+    {
+      "index": 49,
+      "baseline_joint_psnr": 18.175609588623047,
+      "baseline_joint_ssim": 0.6535426378250122,
+      "w32_psnr": 19.58770751953125,
+      "w32_ssim": 0.7797507047653198
+    },
+    {
+      "index": 50,
+      "baseline_joint_psnr": 18.170364379882812,
+      "baseline_joint_ssim": 0.6536762714385986,
+      "w32_psnr": 19.860206604003906,
+      "w32_ssim": 0.7860316634178162
+    },
+    {
+      "index": 51,
+      "baseline_joint_psnr": 17.173744201660156,
+      "baseline_joint_ssim": 0.5180391073226929,
+      "w32_psnr": 23.88118553161621,
+      "w32_ssim": 0.8013114929199219
+    },
+    {
+      "index": 52,
+      "baseline_joint_psnr": 17.164966583251953,
+      "baseline_joint_ssim": 0.5178772807121277,
+      "w32_psnr": 23.777320861816406,
+      "w32_ssim": 0.7958077788352966
+    },
+    {
+      "index": 53,
+      "baseline_joint_psnr": 14.639325141906738,
+      "baseline_joint_ssim": 0.5723549723625183,
+      "w32_psnr": 14.634747505187988,
+      "w32_ssim": 0.7333747148513794
+    },
+    {
+      "index": 54,
+      "baseline_joint_psnr": 16.736846923828125,
+      "baseline_joint_ssim": 0.7918891906738281,
+      "w32_psnr": 12.109085083007812,
+      "w32_ssim": 0.718886137008667
+    },
+    {
+      "index": 55,
+      "baseline_joint_psnr": 16.701053619384766,
+      "baseline_joint_ssim": 0.7910577058792114,
+      "w32_psnr": 11.889293670654297,
+      "w32_ssim": 0.7094286680221558
+    },
+    {
+      "index": 56,
+      "baseline_joint_psnr": 18.362695693969727,
+      "baseline_joint_ssim": 0.458448588848114,
+      "w32_psnr": 23.371259689331055,
+      "w32_ssim": 0.6445757150650024
+    },
+    {
+      "index": 57,
+      "baseline_joint_psnr": 18.364151000976562,
+      "baseline_joint_ssim": 0.45813867449760437,
+      "w32_psnr": 23.03926658630371,
+      "w32_ssim": 0.6380131244659424
+    },
+    {
+      "index": 58,
+      "baseline_joint_psnr": 19.690462112426758,
+      "baseline_joint_ssim": 0.6859053373336792,
+      "w32_psnr": 29.643329620361328,
+      "w32_ssim": 0.8896569609642029
+    },
+    {
+      "index": 59,
+      "baseline_joint_psnr": 20.86931610107422,
+      "baseline_joint_ssim": 0.6297507286071777,
+      "w32_psnr": 23.646230697631836,
+      "w32_ssim": 0.732772946357727
+    },
+    {
+      "index": 60,
+      "baseline_joint_psnr": 20.858951568603516,
+      "baseline_joint_ssim": 0.6274952292442322,
+      "w32_psnr": 23.62561798095703,
+      "w32_ssim": 0.7318376302719116
+    },
+    {
+      "index": 61,
+      "baseline_joint_psnr": 19.1278133392334,
+      "baseline_joint_ssim": 0.7163448333740234,
+      "w32_psnr": 23.785053253173828,
+      "w32_ssim": 0.8617388010025024
+    },
+    {
+      "index": 62,
+      "baseline_joint_psnr": 19.161880493164062,
+      "baseline_joint_ssim": 0.7178459167480469,
+      "w32_psnr": 23.804481506347656,
+      "w32_ssim": 0.8761032819747925
+    },
+    {
+      "index": 63,
+      "baseline_joint_psnr": 18.19190788269043,
+      "baseline_joint_ssim": 0.5621134042739868,
+      "w32_psnr": 26.893674850463867,
+      "w32_ssim": 0.7615718841552734
+    },
+    {
+      "index": 64,
+      "baseline_joint_psnr": 19.041259765625,
+      "baseline_joint_ssim": 0.5369755029678345,
+      "w32_psnr": 24.416019439697266,
+      "w32_ssim": 0.7261974215507507
+    },
+    {
+      "index": 65,
+      "baseline_joint_psnr": 19.03371238708496,
+      "baseline_joint_ssim": 0.5360618829727173,
+      "w32_psnr": 24.665729522705078,
+      "w32_ssim": 0.7264835834503174
+    },
+    {
+      "index": 66,
+      "baseline_joint_psnr": 28.634775161743164,
+      "baseline_joint_ssim": 0.8968319892883301,
+      "w32_psnr": 25.500782012939453,
+      "w32_ssim": 0.7954482436180115
+    },
+    {
+      "index": 67,
+      "baseline_joint_psnr": 17.301956176757812,
+      "baseline_joint_ssim": 0.735419511795044,
+      "w32_psnr": 20.825008392333984,
+      "w32_ssim": 0.5707371234893799
+    },
+    {
+      "index": 68,
+      "baseline_joint_psnr": 14.964788436889648,
+      "baseline_joint_ssim": 0.35801661014556885,
+      "w32_psnr": 14.94720458984375,
+      "w32_ssim": 0.3580549657344818
+    },
+    {
+      "index": 69,
+      "baseline_joint_psnr": 14.129426956176758,
+      "baseline_joint_ssim": 0.35082465410232544,
+      "w32_psnr": 15.275321960449219,
+      "w32_ssim": 0.3730853199958801
+    },
+    {
+      "index": 70,
+      "baseline_joint_psnr": 14.843753814697266,
+      "baseline_joint_ssim": 0.3676787316799164,
+      "w32_psnr": 15.222515106201172,
+      "w32_ssim": 0.36524903774261475
+    },
+    {
+      "index": 71,
+      "baseline_joint_psnr": 13.590147018432617,
+      "baseline_joint_ssim": 0.3950982093811035,
+      "w32_psnr": 20.123498916625977,
+      "w32_ssim": 0.5250227451324463
+    },
+    {
+      "index": 72,
+      "baseline_joint_psnr": 12.451217651367188,
+      "baseline_joint_ssim": 0.4032672345638275,
+      "w32_psnr": 17.838146209716797,
+      "w32_ssim": 0.5171468257904053
+    },
+    {
+      "index": 73,
+      "baseline_joint_psnr": 16.469398498535156,
+      "baseline_joint_ssim": 0.47399425506591797,
+      "w32_psnr": 16.024978637695312,
+      "w32_ssim": 0.45644718408584595
+    },
+    {
+      "index": 74,
+      "baseline_joint_psnr": 14.902729988098145,
+      "baseline_joint_ssim": 0.4096057116985321,
+      "w32_psnr": 17.1359806060791,
+      "w32_ssim": 0.4916231632232666
+    },
+    {
+      "index": 75,
+      "baseline_joint_psnr": 14.845556259155273,
+      "baseline_joint_ssim": 0.4020806550979614,
+      "w32_psnr": 16.24277687072754,
+      "w32_ssim": 0.46730005741119385
+    },
+    {
+      "index": 76,
+      "baseline_joint_psnr": 19.483991622924805,
+      "baseline_joint_ssim": 0.6979767084121704,
+      "w32_psnr": 19.78374671936035,
+      "w32_ssim": 0.7077813148498535
+    },
+    {
+      "index": 77,
+      "baseline_joint_psnr": 19.569839477539062,
+      "baseline_joint_ssim": 0.7029701471328735,
+      "w32_psnr": 19.259235382080078,
+      "w32_ssim": 0.6813334226608276
+    },
+    {
+      "index": 78,
+      "baseline_joint_psnr": 20.134199142456055,
+      "baseline_joint_ssim": 0.8031832575798035,
+      "w32_psnr": 15.59784984588623,
+      "w32_ssim": 0.5966092348098755
+    },
+    {
+      "index": 79,
+      "baseline_joint_psnr": 20.252639770507812,
+      "baseline_joint_ssim": 0.8043493032455444,
+      "w32_psnr": 15.855567932128906,
+      "w32_ssim": 0.6185531616210938
+    },
+    {
+      "index": 80,
+      "baseline_joint_psnr": 20.124799728393555,
+      "baseline_joint_ssim": 0.8029226064682007,
+      "w32_psnr": 16.065553665161133,
+      "w32_ssim": 0.6387607455253601
+    },
+    {
+      "index": 81,
+      "baseline_joint_psnr": 9.080754280090332,
+      "baseline_joint_ssim": 0.027338724583387375,
+      "w32_psnr": 13.147610664367676,
+      "w32_ssim": 0.2588803470134735
+    },
+    {
+      "index": 82,
+      "baseline_joint_psnr": 8.755281448364258,
+      "baseline_joint_ssim": 0.024238061159849167,
+      "w32_psnr": 13.032426834106445,
+      "w32_ssim": 0.23650269210338593
+    },
+    {
+      "index": 83,
+      "baseline_joint_psnr": 20.83531379699707,
+      "baseline_joint_ssim": 0.5331110954284668,
+      "w32_psnr": 18.162277221679688,
+      "w32_ssim": 0.4148741662502289
+    },
+    {
+      "index": 84,
+      "baseline_joint_psnr": 21.874797821044922,
+      "baseline_joint_ssim": 0.5486593246459961,
+      "w32_psnr": 18.607433319091797,
+      "w32_ssim": 0.4614273011684418
+    },
+    {
+      "index": 85,
+      "baseline_joint_psnr": 21.15928840637207,
+      "baseline_joint_ssim": 0.5423154830932617,
+      "w32_psnr": 18.750091552734375,
+      "w32_ssim": 0.4427158534526825
+    },
+    {
+      "index": 86,
+      "baseline_joint_psnr": 22.457704544067383,
+      "baseline_joint_ssim": 0.53668612241745,
+      "w32_psnr": 26.93222999572754,
+      "w32_ssim": 0.6383448839187622
+    },
+    {
+      "index": 87,
+      "baseline_joint_psnr": 16.34449005126953,
+      "baseline_joint_ssim": 0.3937792181968689,
+      "w32_psnr": 25.97852325439453,
+      "w32_ssim": 0.6017206907272339
+    },
+    {
+      "index": 88,
+      "baseline_joint_psnr": 14.750609397888184,
+      "baseline_joint_ssim": 0.36387884616851807,
+      "w32_psnr": 18.14288902282715,
+      "w32_ssim": 0.4978010058403015
+    },
+    {
+      "index": 89,
+      "baseline_joint_psnr": 14.619020462036133,
+      "baseline_joint_ssim": 0.34696680307388306,
+      "w32_psnr": 18.870508193969727,
+      "w32_ssim": 0.5198617577552795
+    },
+    {
+      "index": 90,
+      "baseline_joint_psnr": 14.906854629516602,
+      "baseline_joint_ssim": 0.30478596687316895,
+      "w32_psnr": 19.16324806213379,
+      "w32_ssim": 0.44171851873397827
+    },
+    {
+      "index": 91,
+      "baseline_joint_psnr": 15.308809280395508,
+      "baseline_joint_ssim": 0.31216633319854736,
+      "w32_psnr": 19.79617691040039,
+      "w32_ssim": 0.47990044951438904
+    },
+    {
+      "index": 92,
+      "baseline_joint_psnr": 15.726962089538574,
+      "baseline_joint_ssim": 0.32098013162612915,
+      "w32_psnr": 19.48888397216797,
+      "w32_ssim": 0.46847233176231384
+    },
+    {
+      "index": 93,
+      "baseline_joint_psnr": 21.640483856201172,
+      "baseline_joint_ssim": 0.6542797684669495,
+      "w32_psnr": 15.975028991699219,
+      "w32_ssim": 0.4762706160545349
+    },
+    {
+      "index": 94,
+      "baseline_joint_psnr": 21.582548141479492,
+      "baseline_joint_ssim": 0.6544632315635681,
+      "w32_psnr": 16.027912139892578,
+      "w32_ssim": 0.47886353731155396
+    },
+    {
+      "index": 95,
+      "baseline_joint_psnr": 26.343793869018555,
+      "baseline_joint_ssim": 0.6292781829833984,
+      "w32_psnr": 20.195480346679688,
+      "w32_ssim": 0.554307222366333
+    },
+    {
+      "index": 96,
+      "baseline_joint_psnr": 18.018272399902344,
+      "baseline_joint_ssim": 0.5503767728805542,
+      "w32_psnr": 18.000944137573242,
+      "w32_ssim": 0.46041339635849
+    },
+    {
+      "index": 97,
+      "baseline_joint_psnr": 15.949403762817383,
+      "baseline_joint_ssim": 0.2813703417778015,
+      "w32_psnr": 20.983108520507812,
+      "w32_ssim": 0.4255843162536621
+    },
+    {
+      "index": 98,
+      "baseline_joint_psnr": 16.991653442382812,
+      "baseline_joint_ssim": 0.29802921414375305,
+      "w32_psnr": 21.199071884155273,
+      "w32_ssim": 0.43453216552734375
+    },
+    {
+      "index": 99,
+      "baseline_joint_psnr": 16.953893661499023,
+      "baseline_joint_ssim": 0.2968626618385315,
+      "w32_psnr": 21.14061164855957,
+      "w32_ssim": 0.43667563796043396
+    }
+  ]
+}

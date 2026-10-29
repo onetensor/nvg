@@ -77,8 +77,13 @@ export class SIDPipeline {
     const preprocessStart = performance.now();
     const prepared = await this.preprocessor.prepare(video, geometry, mode, gain);
     this.temporal.apply(prepared.buffer, prepared.dims, temporalLevel);
+    // Direct models receive the accumulated, unamplified packed RGB; gain and
+    // clipping come after accumulation so averaging sees unclipped values.
+    const modelInput = mode === 'direct'
+      ? this.gainTransform.apply(prepared.buffer, gain, prepared.dims.reduce((product, value) => product * value, 1))
+      : prepared.buffer;
     const inputBackend = mode === 'learned' ? this.adapter! : this.sid;
-    const input = inputBackend.tensorFromGpuBuffer(prepared.buffer, prepared.dims);
+    const input = inputBackend.tensorFromGpuBuffer(modelInput, prepared.dims);
     const preprocess = performance.now() - preprocessStart;
 
     let adapterMs = 0;
@@ -89,8 +94,9 @@ export class SIDPipeline {
       if (mode === 'learned') {
         const adapterStart = performance.now();
         adapterOutput = await this.adapter!.run(input);
+        if (adapterOutput.location !== 'gpu-buffer') throw new Error('Adapter output is not GPU-resident.');
         const rawCount = geometry.rawWidth * geometry.rawHeight * 4;
-        const gained = this.gainTransform.apply(adapterOutput, gain, rawCount);
+        const gained = this.gainTransform.apply(adapterOutput.gpuBuffer, gain, rawCount);
         sidInput = this.sid.tensorFromGpuBuffer(gained, [1, 4, geometry.rawHeight, geometry.rawWidth]);
         adapterMs = performance.now() - adapterStart;
       }

@@ -83,7 +83,85 @@ phone therefore mostly requires a cheaper adapter/SID, not pipeline changes.
 
 The earlier working tree was clean when the original handoff was written, and
 `50de041` was reviewed by a second agent. The follow-up has not had a
-second-agent review.
+second-agent review (the user declined it).
+
+## Quality pass (`4f9365c` and the direct-model work)
+
+After `a72956b` the user reported ~20–22 FPS at 180p on the phone and said
+quality was the real problem: in a dark room with slight ambient light the
+output showed little more than blurry outlines. Findings and fixes:
+
+- **Auto gain was broken in the dark (fixed in `4f9365c`).** The histogram used
+  linear 1/255 bins, so any median below ~sRGB 13/255 reported p50 = 0 and gain
+  ran to 300×. Bins are now sqrt-spaced (`record_luminance`), decoded with bin
+  centers in `readStats`. A synthetic dark feed went from p50 0.0000 to 0.0017.
+- **Downsampling aliased (fixed).** One bilinear tap per output pixel at 4×
+  decimation; now `linear_rgb` tiles the footprint with taps, and the copied
+  texture is `rgba8unorm-srgb` so filtering happens in linear light (a 1-px
+  checkerboard now averages to exactly 0.5). The calibration thumbnail
+  re-encodes to sRGB to keep matching the Canvas2D probe.
+- **Input temporal accumulation (new).** `src/temporal.ts` +
+  `shaders/temporal.wgsl` average the linear model input per pixel (2/4/8
+  frames), resetting on motion measured in sqrt space. Default is 2 frames:
+  in very dark scenes faint moving edges are below the noise and get smeared at
+  higher settings. Measured 2.6× noise-std reduction at 4 frames on the GPU.
+- **Expectation setting.** SID's showcase results are 14-bit RAW at ~0.1 s from
+  a full-frame sensor; an iPhone video frame is 8-bit, ~1/30 s, ISP-processed.
+  The old 19.08 dB evaluation also fed unquantized 16-bit inputs with the oracle
+  exposure ratio, which is easier and different from what the phone delivers.
+- **ANE/INT8** is not reachable from Safari (no Neural Engine API; WebNN is
+  experimental). ORT WebGPU has no fast INT8 conv path. FP16 on the GPU is the
+  right precision for the web app; Core ML in a native app is the ANE route.
+
+### Direct (adapter-free) models
+
+- `training/sid_model.py`: `SIDUNet(in_channels, width)`, `direct_from_bayer`
+  (12-channel warm start that exactly reproduces pseudo-Bayer + joint SID; max
+  diff 6.6e-7), `packed_linear_rgb`.
+- `training/phone_sim.py`: simulated iPhone capture — phone auto-exposure
+  leaves 2–100× for our gain, ISP (WB/matrix error, tone, black crush, NR
+  blur), 8-bit, JPEG, then the runtime's inverse sRGB, area downsampling (1–2×
+  in training) and the exact `autoGain.ts` steady-state formula. Eval is
+  deterministic per patch.
+- `training/train_direct.py`, `training/evaluate_direct.py` (`--protocol
+  phone|legacy`; compares against the deployed adapter + joint SID on the same
+  patches), `tools/export_direct.py`, `training/runpod_direct.sh` (stages:
+  setup, data, patches, teacher, student, evaluate, export, upload).
+- Plan: width-32 teacher warm-started from the joint SID, then a width-16
+  student distilled from it. Random-weight WebGPU timing on the local iGPU at
+  180p: width 32 ≈ 30–36 ms, 24 ≈ 17–21 ms, 16 ≈ 7–11 ms, 12 ≈ 6–8 ms, versus
+  adapter ≈ 22 ms + joint SID ≈ 18–22 ms. Width 16 would allow 360p at roughly
+  today's 180p cost.
+- **Result (deployed as production):** width-32 teacher, 19k of 30k steps
+  (best val), batch 16 at 256², lr 5e-5, on 7460 train patches (all 1865
+  records × 4). Held-out test, 100 patches (`models/evaluation/`):
+
+  | Protocol | Deployed adapter + joint SID | Direct w32 |
+  |---|---|---|
+  | phone sim, 2× downsample | 12.85 dB / 0.367 | 21.53 dB / 0.696 |
+  | phone sim, 4× downsample | 12.91 dB / 0.368 | 21.21 dB / 0.705 |
+  | legacy (16-bit input, oracle gain) | 19.08 dB / 0.602 | 19.59 dB / 0.649 |
+
+  The legacy baseline reproduces the published 19.08 dB, validating the setup.
+  ONNX vs PyTorch max error 3e-7; FP16 MAE 6.8e-5. The phone protocol is a
+  simulation; only a physical test confirms it. A width-16 student (distilled
+  from the teacher, 60k steps) was still training when this was written.
+- Runtime plumbing (now active): preprocess
+  mode 2 writes unamplified 12-channel packed RGB, the accumulator averages it,
+  `PseudoRawGain` amplifies and clips it, then SID runs. `metadata.sidDirect`
+  plus `metadata.production` choose the default; `?model=direct|joint`
+  overrides it on a device. `tools/sync-web-models.mjs` deploys the direct
+  model beside the joint pair, and each load downloads only what it runs.
+
+RunPod resources created for this (delete when finished): network volume
+`15zybm4owd` (`nvg-direct-training`, 150 GB, US-NE-1; the 25 GB Sony archive
+expands to 72.5 GB, so 100 GB was too small while both exist) and pod `x2h7ttky31ropk`
+(RTX PRO 6000 Server, $2.49/hr). The pod initially had no 22/tcp mapping;
+`runpodctl ssh info` kept reporting "initializing" while `pod get` showed
+`running` with SSH details under `.ssh`, so read `pod get` directly.
+`training/runpod_dataset.sh` previously aborted silently under `pipefail` when
+`DATA_DIR` did not exist; it now creates it first. The user asked that no
+training run on their local machine.
 
 ## What the user wants
 
