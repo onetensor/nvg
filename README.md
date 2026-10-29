@@ -233,8 +233,10 @@ path is used instead of ONNX Runtime's newer native WebGPU path. Enhanced frames
 are cropped and packed to RGBA8 on the GPU, copied through a three-buffer
 asynchronous readback ring, and drawn through Canvas2D to avoid the iOS WebGPU
 canvas invisibility/flicker bug. The readback no longer blocks inference, and
-the camera video remains composited behind the canvas because WebKit may return
-black external-texture samples for a hidden video. Histogram readback runs once
+the iPhone path imports a `VideoFrame` snapshot instead of the camera-backed
+`HTMLVideoElement` because WebKit may return black external-texture samples for
+the latter. A one-pixel visible camera edge prevents fully occluded video from
+being throttled. Histogram readback runs once
 per 30 processed frames, temporal filtering defaults Off, and the frame pump
 keeps at most one inference in flight so overload drops frames instead of
 building latency.

@@ -19,8 +19,14 @@ button, select { -webkit-tap-highlight-color: transparent; }
 #camera { z-index: 1; }
 #enhanced { z-index: 2; }
 .stage[data-view="original"] #enhanced { display: none; }
-/* Keep the video composited behind the opaque enhanced canvas. WebKit can
-   return black from importExternalTexture() when its source is visibility:hidden. */
+/* Safari throttles fully occluded camera videos and has returned black GPU
+   external textures for them. A one-pixel visible edge keeps its media path
+   live while VideoFrame supplies the full intrinsic camera frame to WebGPU. */
+.stage[data-view="enhanced"] #camera {
+  z-index: 3;
+  clip-path: inset(0 0 0 calc(100% - 1px));
+  pointer-events: none;
+}
 .stage[data-view="split"] #enhanced { clip-path: inset(0 0 0 var(--split)); }
 
 .topbar { position: absolute; z-index: 8; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: calc(env(safe-area-inset-top) + 16px) 18px 12px; pointer-events: none; background: linear-gradient(rgba(0,0,0,.62), transparent); }
