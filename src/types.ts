@@ -1,5 +1,6 @@
-export type AdapterMode = 'manual' | 'learned';
-export type ModelVariant = 'joint' | 'original';
+/** learned: adapter + SID; manual: fixed pseudo-Bayer + SID; direct: 12-channel packed RGB SID. */
+export type AdapterMode = 'manual' | 'learned' | 'direct';
+export type ModelVariant = 'joint' | 'original' | 'direct';
 export type ViewMode = 'original' | 'enhanced' | 'split';
 export type ResolutionChoice = 'auto' | '180p' | '360p' | '540p' | '720p' | '1080p';
 export type TemporalLevel = 'off' | 'low' | 'medium' | 'high';
@@ -71,6 +72,10 @@ export interface ModelMetadata {
   schemaVersion: number;
   sid: ModelAsset;
   sidJoint?: ModelAsset;
+  /** Adapter-free SID taking 2x2-packed linear RGB (12 channels). */
+  sidDirect?: ModelAsset & { inputChannels: number; width: number };
+  /** Default variant; `?model=` overrides it for on-device comparison. */
+  production?: ModelVariant;
   adapter: ModelAsset & { parameterCount: number };
   preprocessing: {
     transfer: 'srgb-inverse';

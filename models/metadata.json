@@ -68,6 +68,47 @@
       }
     }
   },
+  "sidDirect": {
+    "available": true,
+    "url": "./models/sid-direct-w32.onnx",
+    "sha256": "e6c5b8ba4413b806d847abd6c91b27adf042bd110f46606b6f7da11f74c190f5",
+    "inputName": "input",
+    "outputName": "output",
+    "inputLayout": "NCHW",
+    "description": "Adapter-free SID taking 2x2-packed linear RGB, trained on simulated iPhone video (warm-started from the joint SID)",
+    "inputChannels": 12,
+    "width": 32,
+    "fp16": {
+      "available": true,
+      "url": "./models/sid-direct-w32-fp16.onnx",
+      "sha256": "fdb09a7f1bee91208295c20c12714c6e25e818e7816ea68862ab9c4402d18fd5",
+      "mae": 6.761904061628836e-05,
+      "maxError": 0.00025069713592529297
+    },
+    "evaluation": {
+      "phone-ds2": {
+        "samples": 100,
+        "psnr": 21.5287,
+        "ssim": 0.6957,
+        "deployedJointPsnr": 12.8516,
+        "deployedJointSsim": 0.3667
+      },
+      "phone-ds4": {
+        "samples": 100,
+        "psnr": 21.2144,
+        "ssim": 0.7049,
+        "deployedJointPsnr": 12.9114,
+        "deployedJointSsim": 0.3684
+      },
+      "legacy": {
+        "samples": 100,
+        "psnr": 19.5942,
+        "ssim": 0.6486,
+        "deployedJointPsnr": 19.0805,
+        "deployedJointSsim": 0.6019
+      }
+    }
+  },
   "adapter": {
     "available": true,
     "url": "./models/pseudo-raw-adapter.onnx",
@@ -115,5 +156,6 @@
     "mae": 2.3805858617720332e-08,
     "maxError": 7.152557373046875e-07,
     "psnr": 148.4475596226027
-  }
+  },
+  "production": "direct"
 }

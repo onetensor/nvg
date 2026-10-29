@@ -25,13 +25,21 @@ function fp16Only(asset) {
 
 const deployedSid = fp16Only(selectedSid);
 const deployedAdapter = fp16Only(metadata.adapter);
+// The direct model ships beside the joint pair so ?model= can compare them on
+// a phone; each page load downloads only the variant it runs.
+const deployedDirect = metadata.sidDirect?.fp16?.available ? fp16Only(metadata.sidDirect) : undefined;
+if (metadata.production === 'direct' && !deployedDirect) {
+  throw new Error('metadata.production is "direct" but no FP16 direct model is packaged.');
+}
+const { sidDirect: _sidDirect, ...withoutDirect } = metadata;
 const deployedMetadata = {
-  ...metadata,
+  ...withoutDirect,
   // Both keys deliberately resolve to the selected joint model. The original
   // checkpoint remains in models/ for reproducibility but is not deployed.
   sid: deployedSid,
   sidJoint: deployedSid,
   adapter: deployedAdapter,
+  ...(deployedDirect ? { sidDirect: deployedDirect } : {}),
 };
 
 await rm(destination, { recursive: true, force: true });
@@ -39,7 +47,7 @@ await mkdir(destination, { recursive: true });
 await writeFile(resolve(destination, 'metadata.json'), `${JSON.stringify(deployedMetadata, null, 2)}\n`);
 
 const deployedUrls = new Set();
-for (const asset of [deployedSid, deployedAdapter]) {
+for (const asset of [deployedSid, deployedAdapter, deployedDirect].filter(Boolean)) {
   deployedUrls.add(asset.url);
   if (asset.fp16?.available) deployedUrls.add(asset.fp16.url);
 }

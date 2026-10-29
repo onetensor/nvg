@@ -44,13 +44,15 @@
           </label>
           <label>SID model
             <select id="model-variant">
-              <option value="joint" selected>Joint tuned (quality)</option>
+              <option value="joint" selected>Joint tuned + adapter</option>
+              <option value="direct" disabled>Direct (phone-trained)</option>
             </select>
           </label>
           <label>Adapter
             <select id="adapter-mode">
               <option value="manual">Manual Bayer</option>
               <option value="learned" selected>Learned pseudo-RAW</option>
+              <option value="direct" disabled>None (direct model)</option>
             </select>
           </label>
           <label>Resolution

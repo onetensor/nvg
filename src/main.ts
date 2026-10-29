@@ -51,6 +51,10 @@ async function loadMetadata(): Promise<ModelMetadata> {
   if (value.sid.fp16) value.sid.fp16.url = modelUrl(value.sid.fp16.url);
   if (value.sidJoint?.fp16) value.sidJoint.fp16.url = modelUrl(value.sidJoint.fp16.url);
   if (value.adapter.fp16) value.adapter.fp16.url = modelUrl(value.adapter.fp16.url);
+  if (value.sidDirect) {
+    value.sidDirect.url = modelUrl(value.sidDirect.url);
+    if (value.sidDirect.fp16) value.sidDirect.fp16.url = modelUrl(value.sidDirect.fp16.url);
+  }
   resolveFixedAsset(value.sid);
   if (value.sidJoint) resolveFixedAsset(value.sidJoint);
   resolveFixedAsset(value.adapter);
@@ -62,10 +66,22 @@ function selectedMetadata(): Promise<ModelMetadata> {
   return metadataPromise;
 }
 
+/** `?model=direct|joint` overrides the metadata's production default when available. */
+function requestedVariant(value: ModelMetadata): ModelVariant {
+  const query = new URLSearchParams(window.location.search).get('model');
+  const wanted = query === 'direct' || query === 'joint' ? query : value.production ?? 'joint';
+  if (wanted === 'direct' && value.sidDirect?.available) return 'direct';
+  return value.sidJoint?.available ? 'joint' : 'original';
+}
+
 async function preloadSelectedModels(): Promise<boolean> {
   const gpuAdapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
   if (!gpuAdapter?.features.has('shader-f16')) return false;
   const value = await selectedMetadata();
+  if (requestedVariant(value) === 'direct') {
+    await preloadModel(value.sidDirect!.fp16?.available ? value.sidDirect!.fp16.url : value.sidDirect!.url);
+    return true;
+  }
   const selectedSid = value.sidJoint?.available ? value.sidJoint : value.sid;
   await Promise.all([preloadModel(selectedSid.url), preloadModel(value.adapter.url)]);
   return true;
@@ -129,23 +145,22 @@ async function initializePipeline(): Promise<void> {
     throw new Error('Official SID model is not packaged yet; camera is running in Original mode.');
   }
   const jointOption = ui.model.querySelector<HTMLOptionElement>('option[value="joint"]');
-  const jointAvailable = metadata.sidJoint?.available === true;
-  if (jointOption) jointOption.disabled = !jointAvailable;
-  activeModel = selectedValues(ui).model;
-  if (activeModel === 'joint' && !jointAvailable) {
-    activeModel = 'original';
-    ui.model.value = 'original';
-  }
+  const directOption = ui.model.querySelector<HTMLOptionElement>('option[value="direct"]');
+  if (jointOption) jointOption.disabled = metadata.sidJoint?.available !== true;
+  if (directOption) directOption.disabled = metadata.sidDirect?.available !== true;
+  activeModel = requestedVariant(metadata);
+  ui.model.value = activeModel;
+  const direct = activeModel === 'direct';
   const gpuAdapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
   if (!gpuAdapter) throw new Error('WebGPU could not acquire a GPU adapter on this device.');
   if (!gpuAdapter.features.has('shader-f16')) {
     throw new Error('This optimized build requires WebGPU shader-f16; FP32 is intentionally not downloaded.');
   }
-  const selectedSid = activeModel === 'joint' ? metadata.sidJoint! : metadata.sid;
+  const selectedSid = direct ? metadata.sidDirect! : activeModel === 'joint' ? metadata.sidJoint! : metadata.sid;
   const requested = selectedValues(ui);
   geometry = selectedResolution(requested.resolution);
   const appleMobileWebKit = isAppleMobileWebKit();
-  const useFixed360 = requested.resolution === '360p' &&
+  const useFixed360 = !direct && requested.resolution === '360p' &&
     selectedSid.fixed360p?.available === true &&
     metadata.adapter.fixed360p?.available === true;
   const sidFixed = useFixed360 ? selectedSid.fixed360p! : undefined;
@@ -159,6 +174,8 @@ async function initializePipeline(): Promise<void> {
     },
     adapter: {
       ...metadata.adapter,
+      // Direct models need no adapter, so it is never downloaded.
+      ...(direct ? { available: false } : {}),
       ...(adapterFixed ? { url: adapterFixed.url, sha256: adapterFixed.sha256 } : {}),
       fp16: adapterFixed?.fp16 ? { ...adapterFixed.fp16 } : metadata.adapter.fp16 ? { ...metadata.adapter.fp16 } : undefined,
     },
@@ -169,8 +186,8 @@ async function initializePipeline(): Promise<void> {
   if (runtimeMetadata.adapter.fp16?.available) runtimeMetadata.adapter.url = runtimeMetadata.adapter.fp16.url;
   const useGraphCapture = useFixed360 && !appleMobileWebKit;
   setStatus(ui, appleMobileWebKit
-    ? 'iPhone compatibility mode · loading selected joint model…'
-    : `Loading ${activeModel === 'joint' ? 'joint-tuned' : 'original'} SID model…`);
+    ? `iPhone compatibility mode · loading ${direct ? 'direct' : 'joint'} model…`
+    : `Loading ${direct ? 'direct' : activeModel === 'joint' ? 'joint-tuned' : 'original'} SID model…`);
   pipeline = new SIDPipeline(
     runtimeMetadata,
     ui.canvas,
@@ -188,7 +205,14 @@ async function initializePipeline(): Promise<void> {
   const learnedOption = ui.adapter.querySelector<HTMLOptionElement>('option[value="learned"]');
   if (learnedOption) learnedOption.disabled = !pipeline.learnedAdapterAvailable;
   if (!pipeline.learnedAdapterAvailable && ui.adapter.value === 'learned') ui.adapter.value = 'manual';
-  const label = activeModel === 'joint' ? 'Joint-tuned SID' : 'Original SID';
+  if (direct) {
+    // The direct model consumes packed RGB itself; there is no adapter choice.
+    ui.adapter.value = 'direct';
+    ui.adapter.disabled = true;
+  }
+  const label = direct
+    ? `Direct SID (width ${metadata.sidDirect!.width})`
+    : activeModel === 'joint' ? 'Joint-tuned SID' : 'Original SID';
   const speed = useGraphCapture
     ? ' · static graph capture'
     : appleMobileWebKit ? ' · iPhone visible-canvas fallback' : '';

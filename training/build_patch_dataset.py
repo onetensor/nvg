@@ -99,7 +99,9 @@ def build_split(
     destination = output_root / "patches" / split
     destination.mkdir(parents=True, exist_ok=True)
     completed = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+    # Processes, not threads: LibRaw decoding holds the GIL often enough that a
+    # thread pool saturates only a few cores.
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, workers)) as executor:
         futures = [executor.submit(
             build_record, record_index, record, destination, split,
             patches_per_record, patch_size, seed,
