@@ -16,7 +16,9 @@ const COARSE_RADIUS = 4;
 const FINE_RADIUS = 2;
 const COARSE_CANDIDATES = (2 * COARSE_RADIUS + 1) ** 2;
 const FINE_CANDIDATES = (2 * FINE_RADIUS + 1) ** 2;
-const ALIGN_PASSES = ['cell_maps', 'coarse_maps', 'coarse_search', 'coarse_pick', 'fine_search', 'fine_pick'] as const;
+const ALIGN_PASSES = ['cell_maps', 'coarse_maps', 'coarse_search', 'coarse_pick', 'fine_search', 'fine_pick', 'tile_search'] as const;
+// Local alignment tiles (packed cells per side): ~32 output pixels.
+const TILE_SIZE = 16;
 
 interface Side {
   history: GPUBuffer;
@@ -27,8 +29,9 @@ interface Side {
  * Input-side temporal denoising. Averaging the linear camera tensor before the
  * model raises its signal-to-noise ratio like a longer exposure would, which is
  * the main lever available without RAW sensor data. Each frame is first
- * aligned to the history by a global translation so hand shake does not reset
- * the average at every edge (`?align=0` disables this for comparison).
+ * aligned to the history, first by a global translation and then per 16x16-cell
+ * tile, so hand shake and the rotation, zoom and parallax of walking do not
+ * reset the average at every edge (`?align=global|0` for comparison).
  */
 export class TemporalAccumulator {
   private readonly pipeline: GPUComputePipeline;
@@ -46,10 +49,14 @@ export class TemporalAccumulator {
   private readonly sigma: GPUBuffer;
   private noiseBindGroup: GPUBindGroup | null = null;
   private noiseSource: GPUBuffer | null = null;
-  private readonly alignEnabled = new URLSearchParams(globalThis.location?.search ?? '').get('align') !== '0';
+  /** `?align=0` disables alignment, `?align=global` keeps only the global shift. */
+  private readonly alignMode = new URLSearchParams(globalThis.location?.search ?? '').get('align');
+  private readonly alignEnabled = this.alignMode !== '0';
+  private readonly tilesEnabled = this.alignMode !== '0' && this.alignMode !== 'global';
   private sides: [Side, Side] | null = null;
   private motion: GPUBuffer | null = null;
   private maps: GPUBuffer | null = null;
+  private tileShift: GPUBuffer | null = null;
   private parity = 0;
   private bindGroups: { main: GPUBindGroup; motion: GPUBindGroup; align: GPUBindGroup }[] = [];
   private source: GPUBuffer | null = null;
@@ -80,6 +87,7 @@ export class TemporalAccumulator {
         { binding: 3, visibility: compute, buffer: { type: 'storage' } },
         { binding: 4, visibility: compute, buffer: { type: 'storage' } },
         { binding: 5, visibility: compute, buffer: { type: 'storage' } },
+        { binding: 6, visibility: compute, buffer: { type: 'storage' } },
       ],
     });
     const alignModule = device.createShaderModule({ label: 'temporal alignment', code: alignShader });
@@ -92,7 +100,7 @@ export class TemporalAccumulator {
         compute: { module: alignModule, entryPoint },
       }),
     ])) as Record<(typeof ALIGN_PASSES)[number], GPUComputePipeline>;
-    this.params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.params = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.alignParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.shift = device.createBuffer({
       label: 'temporal alignment shift',
@@ -156,9 +164,10 @@ export class TemporalAccumulator {
     const height = dims[2]!;
     const width = dims[3]!;
     const plane = height * width;
-    this.ensureBuffers(frame, dims[1]!, plane);
+    this.ensureBuffers(frame, dims[1]!, plane, width, height);
+    const align = this.initialized && this.alignEnabled && width >= 16 && height >= 16;
 
-    const values = new ArrayBuffer(32);
+    const values = new ArrayBuffer(48);
     const view = new DataView(values);
     view.setUint32(0, plane, true);
     view.setUint32(4, channels, true);
@@ -168,16 +177,18 @@ export class TemporalAccumulator {
     view.setFloat32(20, MOTION_LOW, true);
     view.setFloat32(24, MOTION_HIGH, true);
     view.setUint32(28, width, true);
+    view.setUint32(32, align && this.tilesEnabled ? 1 : 0, true);
+    view.setUint32(36, TILE_SIZE, true);
     this.device.queue.writeBuffer(this.params, 0, values);
 
     const groups = this.bindGroups[this.parity]!;
     const encoder = this.device.createCommandEncoder({ label: 'input temporal accumulation encoder' });
     if (estimateNoiseIn) this.encodeNoiseEstimate(encoder, frame, channels, width, height, estimateNoiseIn);
-    if (this.initialized && this.alignEnabled && width >= 16 && height >= 16) {
+    if (align) {
       const coarseWidth = Math.floor(width / 4);
       const coarseHeight = Math.floor(height / 4);
       this.device.queue.writeBuffer(this.alignParams, 0, new Int32Array([
-        width, height, channels, coarseWidth, coarseHeight, COARSE_RADIUS, FINE_RADIUS, 0,
+        width, height, channels, coarseWidth, coarseHeight, COARSE_RADIUS, FINE_RADIUS, TILE_SIZE,
       ]));
       const workgroups: Record<(typeof ALIGN_PASSES)[number], number> = {
         cell_maps: Math.ceil(plane / 256),
@@ -186,6 +197,7 @@ export class TemporalAccumulator {
         coarse_pick: 1,
         fine_search: FINE_CANDIDATES,
         fine_pick: 1,
+        tile_search: Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE),
       };
       for (const entry of ALIGN_PASSES) {
         const pass = encoder.beginComputePass({ label: `temporal alignment ${entry}` });
@@ -259,6 +271,7 @@ export class TemporalAccumulator {
     }
     this.motion?.destroy();
     this.maps?.destroy();
+    this.tileShift?.destroy();
     this.params.destroy();
     this.alignParams.destroy();
     this.shift.destroy();
@@ -271,8 +284,8 @@ export class TemporalAccumulator {
     this.source = null;
   }
 
-  private ensureBuffers(frame: GPUBuffer, channels: number, plane: number): void {
-    const key = `${channels}x${plane}`;
+  private ensureBuffers(frame: GPUBuffer, channels: number, plane: number, width: number, height: number): void {
+    const key = `${channels}x${width}x${height}`;
     if (this.key !== key) {
       for (const side of this.sides ?? []) {
         side.history.destroy();
@@ -280,6 +293,7 @@ export class TemporalAccumulator {
       }
       this.motion?.destroy();
       this.maps?.destroy();
+      this.tileShift?.destroy();
       const storage = (label: string, floats: number): GPUBuffer => this.device.createBuffer({
         label,
         size: Math.ceil(floats * 4 / 16) * 16,
@@ -292,6 +306,8 @@ export class TemporalAccumulator {
       this.motion = storage('input temporal motion scores', plane);
       // Cell maps for frame and history, then two coarse maps of plane / 16 each.
       this.maps = storage('temporal alignment luma maps', plane * 2 + Math.ceil(plane / 8) + 2);
+      this.tileShift = storage('temporal alignment tile shifts',
+        2 * Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE));
       this.key = key;
       this.bindGroups = [];
       this.parity = 0;
@@ -315,6 +331,7 @@ export class TemporalAccumulator {
               { binding: 5, resource: { buffer: this.shift } },
               { binding: 6, resource: { buffer: output.history } },
               { binding: 7, resource: { buffer: output.frames } },
+              { binding: 8, resource: { buffer: this.tileShift! } },
             ],
           }),
           motion: this.device.createBindGroup({
@@ -325,6 +342,7 @@ export class TemporalAccumulator {
               { binding: 3, resource: { buffer: this.params } },
               { binding: 4, resource: { buffer: this.motion! } },
               { binding: 5, resource: { buffer: this.shift } },
+              { binding: 8, resource: { buffer: this.tileShift! } },
             ],
           }),
           align: this.device.createBindGroup({
@@ -336,6 +354,7 @@ export class TemporalAccumulator {
               { binding: 3, resource: { buffer: this.maps! } },
               { binding: 4, resource: { buffer: this.costs } },
               { binding: 5, resource: { buffer: this.shift } },
+              { binding: 6, resource: { buffer: this.tileShift! } },
             ],
           }),
         };

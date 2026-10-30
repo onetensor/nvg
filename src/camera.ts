@@ -30,7 +30,33 @@ export class CameraController {
     });
     this.video.srcObject = this.stream;
     await this.video.play();
-    const settings = this.stream.getVideoTracks()[0]?.getSettings();
+    return this.info();
+  }
+
+  /**
+   * Re-requests the capture size (long side, in the stream's current
+   * orientation) and frame-rate ceiling on the live track. applyConstraints
+   * replaces every constraint, so the size is always restated. A lower ceiling
+   * lets the camera deliver fewer frames; browsers may ignore it, so callers
+   * still pace processing themselves.
+   */
+  async configure(longSide: number, maxFrameRate: number): Promise<CameraInfo> {
+    const track = this.stream?.getVideoTracks()[0];
+    if (!track) throw new Error('The camera is not running.');
+    const current = this.info();
+    const shortSide = Math.round(longSide * 9 / 16);
+    const portrait = current.height > current.width;
+    await track.applyConstraints({
+      facingMode: { ideal: 'environment' },
+      width: { ideal: portrait ? shortSide : longSide },
+      height: { ideal: portrait ? longSide : shortSide },
+      frameRate: { ideal: maxFrameRate, max: maxFrameRate },
+    });
+    return this.info();
+  }
+
+  private info(): CameraInfo {
+    const settings = this.stream?.getVideoTracks()[0]?.getSettings();
     return {
       width: settings?.width ?? this.video.videoWidth,
       height: settings?.height ?? this.video.videoHeight,

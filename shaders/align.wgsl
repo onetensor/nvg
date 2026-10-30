@@ -6,7 +6,7 @@ struct Params {
   coarse_height: u32,  // height / 4
   coarse_radius: i32,  // coarse search radius in coarse pixels
   fine_radius: i32,    // fine refinement radius in cells
-  _pad0: u32,
+  tile_size: u32,      // cells per side of a local-alignment tile
 }
 
 // Global (translation-only) alignment of the incoming frame to the temporal
@@ -20,6 +20,8 @@ struct Params {
 @group(0) @binding(3) var<storage, read_write> maps: array<f32>;
 @group(0) @binding(4) var<storage, read_write> costs: array<f32>;
 @group(0) @binding(5) var<storage, read_write> shift: array<i32, 4>;
+// Per-tile shifts (dx, dy) in packed cells, refined around the global shift.
+@group(0) @binding(6) var<storage, read_write> tile_shift: array<i32>;
 
 fn cell_luma(source: u32, cell: u32) -> f32 {
   let plane = params.width * params.height;
@@ -165,4 +167,56 @@ fn fine_pick() {
   let final_shift = coarse_shift + candidate(best, params.fine_radius);
   shift[0] = final_shift.x;
   shift[1] = final_shift.y;
+}
+
+const TILE_RADIUS = 2;
+
+// Pass 7: one workgroup per tile. Walking adds rotation, zoom and parallax
+// that one global translation cannot follow; each tile searches +/-2 cells
+// around the global shift and keeps its own only when it matches clearly
+// better (flat or noisy tiles stay on the global shift instead of jittering).
+@compute @workgroup_size(64)
+fn tile_search(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index) lane: u32) {
+  let tiles_x = (params.width + params.tile_size - 1u) / params.tile_size;
+  let origin = vec2u(group.x % tiles_x, group.x / tiles_x) * params.tile_size;
+  let global = vec2i(shift[0], shift[1]);
+  let plane = params.width * params.height;
+  let side = 2 * TILE_RADIUS + 1;
+  var best = global;
+  var best_cost = 1e10;
+  var global_cost = 1e10;
+  for (var candidate = 0; candidate < side * side; candidate += 1) {
+    let offset = global + vec2i(candidate % side - TILE_RADIUS, candidate / side - TILE_RADIUS);
+    var sum = 0.0;
+    var count = 0.0;
+    for (var i = lane; i < params.tile_size * params.tile_size; i += 64u) {
+      let p = vec2i(origin + vec2u(i % params.tile_size, i / params.tile_size));
+      let q = p + offset;
+      if p.x >= i32(params.width) || p.y >= i32(params.height) { continue; }
+      if q.x < 0 || q.y < 0 || q.x >= i32(params.width) || q.y >= i32(params.height) { continue; }
+      sum += abs(maps[u32(p.y) * params.width + u32(p.x)] - maps[plane + u32(q.y) * params.width + u32(q.x)]);
+      count += 1.0;
+    }
+    partial[lane] = sum;
+    partial_count[lane] = count;
+    workgroupBarrier();
+    for (var stride = 32u; stride > 0u; stride >>= 1u) {
+      if lane < stride {
+        partial[lane] += partial[lane + stride];
+        partial_count[lane] += partial_count[lane + stride];
+      }
+      workgroupBarrier();
+    }
+    // Every lane reads the reduced totals, then all wait before the next reuse.
+    let cost = select(1e9, partial[0] / max(partial_count[0], 1.0),
+                      partial_count[0] >= 0.5 * f32(params.tile_size * params.tile_size));
+    workgroupBarrier();
+    if all(offset == global) { global_cost = cost; }
+    if cost < best_cost { best_cost = cost; best = offset; }
+  }
+  if lane == 0u {
+    let chosen = select(global, best, best_cost < 0.95 * global_cost);
+    tile_shift[2u * group.x] = chosen.x;
+    tile_shift[2u * group.x + 1u] = chosen.y;
+  }
 }
