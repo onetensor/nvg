@@ -425,6 +425,7 @@ ui.resolution.addEventListener('change', () => setGeometry(selectedValues(ui).re
 ui.fpsCap.addEventListener('change', () => { void configureCamera(); });
 ui.temporal.addEventListener('change', () => pipeline?.resetTemporal());
 ui.tint.addEventListener('change', () => {
+  document.documentElement.dataset.tint = ui.tint.value;
   if (pipeline) pipeline.tint = ui.tint.value as MonoTint;
 });
 ui.pop.addEventListener('change', () => {
@@ -519,6 +520,7 @@ window.addEventListener('pagehide', () => {
 applyView(ui, selectedValues(ui).view);
 void refreshCaptureUi();
 updateRequirements();
+document.documentElement.dataset.tint = ui.tint.value;
 updateGainUi();
 void preloadSelectedModels().then((cached) => {
   ui.requirements.textContent = `${ui.requirements.textContent} · ${cached ? 'selected FP16 model cached' : 'shader-f16 unavailable'}`;
