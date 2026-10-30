@@ -90,6 +90,7 @@ export function formatDebug(snapshot: DebugSnapshot): string {
     `SID model    ${snapshot.modelVariant}`,
     `adapter      ${snapshot.adapterMode}`,
     ...(snapshot.cameraInputPath ? [`camera path  ${snapshot.cameraInputPath}`] : []),
+    ...(snapshot.cameraFormat ? [`camera fmt   ${snapshot.cameraFormat}`] : []),
     `SID gain     ${fixed(snapshot.gain)}×${snapshot.automaticGain ? ' (auto)' : ''}`,
     ...(snapshot.inputStats ? [
       `input        ${fixed(snapshot.inputStats.mean, 4)} mean`,

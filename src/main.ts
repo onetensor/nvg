@@ -32,6 +32,28 @@ let metadataPromise: Promise<ModelMetadata> | null = null;
 let outputStats: PipelineResult['outputStats'];
 let inputStats: LuminanceStats | undefined;
 let cameraInputPath: PipelineResult['cameraInputPath'];
+let cameraFormat: string | undefined;
+
+/**
+ * The camera's native pixel format (e.g. NV12 = 8-bit 4:2:0, *P10 = 10-bit)
+ * and colour space, to judge whether reading YUV planes directly could add
+ * luminance precision. Read once from a short-lived VideoFrame.
+ */
+function describeCameraFormat(): void {
+  if (cameraFormat !== undefined || !ui.video.videoWidth || typeof VideoFrame === 'undefined') return;
+  try {
+    const frame = new VideoFrame(ui.video);
+    try {
+      const space = frame.colorSpace;
+      cameraFormat = `${frame.format ?? 'opaque'} ${frame.codedWidth}x${frame.codedHeight} ` +
+        `${space?.matrix ?? '?'}/${space?.transfer ?? '?'}/${space?.fullRange === undefined || space.fullRange === null ? '?' : space.fullRange ? 'full' : 'video'}`;
+    } finally {
+      frame.close();
+    }
+  } catch (error) {
+    cameraFormat = `unavailable (${error instanceof Error ? error.name : 'error'})`;
+  }
+}
 let presentation: PipelineResult['presentation'];
 
 function modelUrl(url: string): string {
@@ -151,6 +173,7 @@ function updateDebug(now: number, mode: AdapterMode): void {
     gain: currentGain,
     automaticGain: ui.autoGain.checked ? currentGain : 0,
     ...(cameraInputPath ? { cameraInputPath } : {}),
+    ...(cameraFormat ? { cameraFormat } : {}),
     ...(inputStats ? { inputStats } : {}),
     ...(outputStats ? { outputStats } : {}),
     ...(presentation ? { presentation } : {}),
@@ -280,6 +303,7 @@ async function refreshCaptureUi(): Promise<void> {
 
 async function processFrame(now: number): Promise<void> {
   captureFrame(now);
+  describeCameraFormat();
   profiler.frameReceived(now);
   if (!pipeline || selectedValues(ui).view === 'original') {
     updateDebug(now, selectedValues(ui).adapter);
