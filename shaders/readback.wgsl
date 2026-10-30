@@ -8,7 +8,7 @@ struct Params {
   // 3: RGB planes; 1: a luminance plane shown through `tint`; 2: luminance
   // plus a plane of object-outline logits.
   channels: u32,
-  // Mono display: 0 = grayscale, 1 = green phosphor.
+  // Mono display: 0 = grayscale, 1 = green phosphor, 2 = blue, 3 = white phosphor.
   tint: u32,
   // 0 = off, 1 = learned (outline plane), 2 = classic (Sobel on the output).
   outline_mode: u32,
@@ -21,14 +21,21 @@ struct Params {
 
 // Green phosphor (P43-like), scaled so full luminance stays within range.
 const PHOSPHOR = vec3f(0.42, 1.0, 0.36);
+// Blue scale, and the cool white of P45 white-phosphor tubes.
+const BLUE = vec3f(0.36, 0.66, 1.0);
+const WHITE_PHOSPHOR = vec3f(0.88, 0.94, 1.0);
 
 @group(0) @binding(0) var<storage, read> image: array<f32>;
 @group(0) @binding(1) var<storage, read_write> rgba: array<u32>;
 @group(0) @binding(2) var<uniform> params: Params;
 
 fn mono_color(value: f32) -> vec3f {
-  if params.tint == 1u { return value * PHOSPHOR; }
-  return vec3f(value);
+  switch params.tint {
+    case 1u: { return value * PHOSPHOR; }
+    case 2u: { return value * BLUE; }
+    case 3u: { return value * WHITE_PHOSPHOR; }
+    default: { return vec3f(value); }
+  }
 }
 
 fn luminance_at(x: i32, y: i32) -> f32 {

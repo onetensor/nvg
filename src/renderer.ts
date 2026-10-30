@@ -4,6 +4,7 @@ import type { DisplayOptions, ModelGeometry, OutputStats, PresentationStats } fr
 
 const RGB_DISPLAY: DisplayOptions = { channels: 3, tint: 'gray', outline: 'off', pop: 'off' };
 const OUTLINE_MODES = { off: 0, learned: 1, classic: 2 } as const;
+const TINTS: Record<DisplayOptions['tint'], number> = { gray: 0, green: 1, blue: 2, white: 3 };
 /** [contrast, local contrast] per pop level. */
 const POP: Record<DisplayOptions['pop'], [number, number]> = { off: [0, 0], medium: [0.25, 0.8], high: [0.5, 1.6] };
 
@@ -12,7 +13,7 @@ function displayParams(geometry: ModelGeometry, display: DisplayOptions): ArrayB
   const values = new ArrayBuffer(48);
   const view = new DataView(values);
   [geometry.paddedWidth, geometry.paddedHeight, geometry.width, geometry.height, geometry.cropX, geometry.cropY,
-    display.channels, display.tint === 'green' ? 1 : 0, OUTLINE_MODES[display.outline]]
+    display.channels, TINTS[display.tint], OUTLINE_MODES[display.outline]]
     .forEach((value, index) => view.setUint32(index * 4, value, true));
   view.setFloat32(36, 1.0, true);
   // Pop applies to luminance output only.

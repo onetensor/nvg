@@ -22,7 +22,7 @@ export type PopLevel = 'off' | 'medium' | 'high';
 /** Object outlines: the model's learned plane, or Sobel on its output. */
 export type OutlineMode = 'off' | 'learned' | 'classic';
 
-export type MonoTint = 'gray' | 'green';
+export type MonoTint = 'gray' | 'green' | 'blue' | 'white';
 
 export interface Resolution {
   label: Exclude<ResolutionChoice, 'auto'>;
