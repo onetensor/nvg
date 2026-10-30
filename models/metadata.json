@@ -70,12 +70,12 @@
   },
   "sidDirect": {
     "available": true,
-    "url": "./models/sid-direct-mono-w12.onnx",
-    "sha256": "ed88db9a374f549b7d5d635a143662e3b9e643605db4ce3febfabb6a639c43b1",
+    "url": "./models/sid-direct-mono-w12-p3.onnx",
+    "sha256": "091dc187ad8b691a9831e822fc80ce843cb5159360f062a57467995c0e419fbe",
     "inputName": "input",
     "outputName": "output",
     "inputLayout": "NCHW",
-    "description": "Width-12 mono restoration SID for 360p, structurally pruned from and distilled by the width-32 mono model",
+    "description": "Width-12 mono restoration SID for 360p, distilled from the width-32 teacher on SID scenes downscaled 3x to the iPhone's field of view",
     "name": "Mono SID 360p",
     "inputChannels": 13,
     "outputChannels": 1,
@@ -83,36 +83,144 @@
     "defaultResolution": "360p",
     "fp16": {
       "available": true,
-      "url": "./models/sid-direct-mono-w12-fp16.onnx",
-      "sha256": "f1a8bd20b59bba9d1bf5d76f570381df4c89a71acb51ac7ca4a7329e350bc936",
-      "mae": 6.910647607583087e-05,
-      "maxError": 0.00026357173919677734
+      "url": "./models/sid-direct-mono-w12-p3-fp16.onnx",
+      "sha256": "ab89163c4e99f3bc875b5a5933d99562b9decf03ff8b2d0e0279741ea9ca2621",
+      "mae": 0.00010567618983259308,
+      "maxError": 0.0003033876419067383
     },
     "evaluation": {
-      "note": "Held-out test bursts, very dark (n2), luma, scored at 360p against the clean phone rendering; the 180p model's output is upscaled 2x.",
+      "note": "Held-out SID test scenes prescaled 3x so scene content is the size the iPhone sees, through the simulated iPhone pipeline, scored at 2x (360p) in luma against the clean phone rendering; 100 crops. n2 = 2 photons at the median.",
       "f1_n2": {
-        "psnr": 20.99,
-        "ssim": 0.664,
-        "lpips": 0.383,
-        "w32At180p": {
-          "psnr": 19.929,
-          "ssim": 0.638,
-          "lpips": 0.497
+        "psnr": 21.35,
+        "ssim": 0.646,
+        "lpips": 0.381,
+        "previousW12": {
+          "psnr": 20.53,
+          "ssim": 0.612,
+          "lpips": 0.425
         }
       },
       "f8_n2": {
-        "psnr": 22.33,
-        "ssim": 0.724,
-        "lpips": 0.327,
-        "w32At180p": {
-          "psnr": 21.407,
-          "ssim": 0.69,
-          "lpips": 0.466
+        "psnr": 22.12,
+        "ssim": 0.701,
+        "lpips": 0.31,
+        "previousW12": {
+          "psnr": 21.32,
+          "ssim": 0.656,
+          "lpips": 0.37
+        }
+      },
+      "f1_n6": {
+        "psnr": 22.12,
+        "ssim": 0.683,
+        "lpips": 0.349,
+        "previousW12": {
+          "psnr": 21.28,
+          "ssim": 0.644,
+          "lpips": 0.399
+        }
+      },
+      "f8_n6": {
+        "psnr": 23.18,
+        "ssim": 0.736,
+        "lpips": 0.291,
+        "previousW12": {
+          "psnr": 22.09,
+          "ssim": 0.674,
+          "lpips": 0.359
         }
       }
     }
   },
   "directVariants": {
+    "mono-w32-p3": {
+      "available": true,
+      "url": "./models/sid-direct-mono-w32-p3.onnx",
+      "sha256": "a8bb29e0f2aaa4579d509a832cb18e47093d740e40ef9c8f054de73a762a2918",
+      "inputName": "input",
+      "outputName": "output",
+      "inputLayout": "NCHW",
+      "description": "Width-32 mono teacher fine-tuned on SID scenes downscaled 3x to the iPhone's field of view (15.5 MB, slow)",
+      "name": "Mono SID w32 180p",
+      "inputChannels": 13,
+      "outputChannels": 1,
+      "width": 32,
+      "defaultResolution": "180p",
+      "fp16": {
+        "available": true,
+        "url": "./models/sid-direct-mono-w32-p3-fp16.onnx",
+        "sha256": "7f60288a7596c2168d81ac1d9a698e051c5e842fddd3f296ebee8e54102fb6bd",
+        "mae": 4.872375075137825e-05,
+        "maxError": 0.00013840198516845703
+      },
+      "evaluation": {
+        "note": "Held-out SID test scenes prescaled 3x so scene content is the size the iPhone sees, through the simulated iPhone pipeline, scored at 2x (360p) in luma against the clean phone rendering; 100 crops. n2 = 2 photons at the median. Scored at 360p; at 180p in the app it is lower.",
+        "f1_n2": {
+          "psnr": 21.78,
+          "ssim": 0.668,
+          "lpips": 0.321
+        },
+        "f8_n2": {
+          "psnr": 22.67,
+          "ssim": 0.725,
+          "lpips": 0.26
+        },
+        "f1_n6": {
+          "psnr": 22.82,
+          "ssim": 0.71,
+          "lpips": 0.291
+        },
+        "f8_n6": {
+          "psnr": 23.92,
+          "ssim": 0.761,
+          "lpips": 0.241
+        }
+      }
+    },
+    "mono-w12-v1": {
+      "available": true,
+      "url": "./models/sid-direct-mono-w12.onnx",
+      "sha256": "ed88db9a374f549b7d5d635a143662e3b9e643605db4ce3febfabb6a639c43b1",
+      "inputName": "input",
+      "outputName": "output",
+      "inputLayout": "NCHW",
+      "description": "Width-12 mono restoration SID for 360p, structurally pruned from and distilled by the width-32 mono model; trained on ~3x magnified crops (previous default)",
+      "name": "Mono SID 360p (v1)",
+      "inputChannels": 13,
+      "outputChannels": 1,
+      "width": 12,
+      "defaultResolution": "360p",
+      "fp16": {
+        "available": true,
+        "url": "./models/sid-direct-mono-w12-fp16.onnx",
+        "sha256": "f1a8bd20b59bba9d1bf5d76f570381df4c89a71acb51ac7ca4a7329e350bc936",
+        "mae": 6.910647607583087e-05,
+        "maxError": 0.00026357173919677734
+      },
+      "evaluation": {
+        "note": "Held-out test bursts, very dark (n2), luma, scored at 360p against the clean phone rendering; the 180p model's output is upscaled 2x.",
+        "f1_n2": {
+          "psnr": 20.99,
+          "ssim": 0.664,
+          "lpips": 0.383,
+          "w32At180p": {
+            "psnr": 19.929,
+            "ssim": 0.638,
+            "lpips": 0.497
+          }
+        },
+        "f8_n2": {
+          "psnr": 22.33,
+          "ssim": 0.724,
+          "lpips": 0.327,
+          "w32At180p": {
+            "psnr": 21.407,
+            "ssim": 0.69,
+            "lpips": 0.466
+          }
+        }
+      }
+    },
     "mono-w32": {
       "available": true,
       "url": "./models/sid-direct-mono13.onnx",
