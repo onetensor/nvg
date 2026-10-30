@@ -17,9 +17,11 @@ from torch.utils.data import DataLoader
 from training.dataset import AdapterDataset
 from training.phone_sim import BurstDataset, PhoneSimDataset, collate_list, degrade_batch, degrade_bursts
 from training.losses import charbonnier, psnr, ssim
+from training.gan import PatchDiscriminator, discriminator_loss, generator_loss
+from training.phone_sim import srgb_encode
 from training.sid_model import (
-    SIDUNet, add_noise_level_input, add_outline_head, balanced_outline_loss, direct_from_bayer, direct_input,
-    load_sid, luma, prune_width, to_mono,
+    SIDUNet, add_attention, add_noise_level_input, add_outline_head, balanced_outline_loss, direct_from_bayer,
+    direct_input, load_sid, luma, prune_width, to_mono,
 )
 
 
@@ -36,6 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lpips-weight", type=float, default=0.0)
     parser.add_argument("--outline-weight", type=float, default=0.0,
                         help="Add an object-outline output plane trained against teacher outlines")
+    parser.add_argument("--attention", action="store_true",
+                        help="Residual attention gates on the skip connections (exact warm start)")
+    parser.add_argument("--gan-weight", type=float, default=0.0,
+                        help="Conditional PatchGAN loss weight (0 disables)")
+    parser.add_argument("--gan-start", type=int, default=2_000, help="Step at which the GAN loss switches on")
     parser.add_argument("--noise-input", choices=("count", "estimate"), default="count",
                         help="13th plane: 1/sqrt(frames), or sqrt(gain) * per-frame noise estimate / sqrt(frames)")
     parser.add_argument("--mono", action="store_true",
@@ -73,6 +80,8 @@ def worker_init(_: int) -> None:
 
 def build_model(args: argparse.Namespace, device: torch.device) -> SIDUNet:
     model = _build_model(args, device)
+    if args.attention:
+        model = add_attention(model.cpu()).to(device)
     model.noise_input = args.noise_input
     return model
 
@@ -195,6 +204,10 @@ def main() -> None:
         return 0.02 + 0.98 * 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
 
     scheduler = LambdaLR(optimizer, schedule)
+    discriminator = None
+    if args.gan_weight > 0:
+        discriminator = PatchDiscriminator(in_channels=1 + model.out_channels // 4).to(device)
+        discriminator_optimizer = AdamW(discriminator.parameters(), lr=1e-4, betas=(0.5, 0.999))
     perceptual = None
     if args.lpips_weight > 0:
         import lpips
@@ -259,6 +272,7 @@ def main() -> None:
                 "state_dict": model.state_dict(),
                 "in_channels": model.in_channels,
                 "noise_input": model.noise_input,
+                "attention": model.attention,
                 "out_channels": model.out_channels,
                 "width": args.width,
                 "input": "packed_linear_rgb",
@@ -311,12 +325,27 @@ def main() -> None:
             balanced_outline_loss(result[:, targets.shape[1]:targets.shape[1] + 1], outlines)
             if outlines is not None else target_loss.new_zeros(())
         )
+        adversarial_loss = target_loss.new_zeros(())
+        discriminator_value = 0.0
+        gan_active = discriminator is not None and step >= args.gan_start
+        if gan_active:
+            # Condition: the noisy input as the model sees it, display-encoded.
+            condition = luma(srgb_encode((inputs * gain).clamp(0, 1)))
+            generated = prediction.clamp(0, 1)
+            adversarial_loss = generator_loss(discriminator(condition, generated))
         loss = (target_loss + args.teacher_weight * teacher_loss + args.lpips_weight * perceptual_loss
-                + args.outline_weight * outline_loss)
+                + args.outline_weight * outline_loss + args.gan_weight * adversarial_loss)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         scheduler.step()
+        if gan_active:
+            # After the generator step: its adversarial term used these weights.
+            discriminator_optimizer.zero_grad(set_to_none=True)
+            d_loss = discriminator_loss(discriminator(condition, targets), discriminator(condition, generated.detach()))
+            d_loss.backward()
+            discriminator_optimizer.step()
+            discriminator_value = d_loss.item()
 
         if step == 1 or step % 50 == 0:
             record = {
@@ -326,6 +355,8 @@ def main() -> None:
                 "teacher_loss": teacher_loss.item(),
                 "lpips_loss": perceptual_loss.item(),
                 "outline_loss": outline_loss.item(),
+                "gan_loss": adversarial_loss.item(),
+                "discriminator_loss": discriminator_value,
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "elapsed_s": round(time.time() - started, 1),
                 "steps_per_s": round(step / (time.time() - started), 2),
