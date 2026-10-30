@@ -160,6 +160,8 @@ export interface DebugSnapshot {
   gain: number;
   automaticGain: number;
   cameraInputPath?: CameraInputPath;
+  /** Native camera pixel format and colour space, from a WebCodecs VideoFrame. */
+  cameraFormat?: string;
   inputStats?: LuminanceStats;
   outputStats?: OutputStats;
   presentation?: PresentationStats;
