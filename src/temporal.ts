@@ -49,10 +49,13 @@ export class TemporalAccumulator {
   private readonly sigma: GPUBuffer;
   private noiseBindGroup: GPUBindGroup | null = null;
   private noiseSource: GPUBuffer | null = null;
-  /** `?align=0` disables alignment, `?align=global` keeps only the global shift. */
+  /**
+   * Global (whole-frame) alignment by default. `?align=0` disables it;
+   * `?align=tiles` adds per-tile refinement, which on device warped visibly.
+   */
   private readonly alignMode = new URLSearchParams(globalThis.location?.search ?? '').get('align');
   private readonly alignEnabled = this.alignMode !== '0';
-  private readonly tilesEnabled = this.alignMode !== '0' && this.alignMode !== 'global';
+  private readonly tilesEnabled = this.alignMode === 'tiles';
   private sides: [Side, Side] | null = null;
   private motion: GPUBuffer | null = null;
   private maps: GPUBuffer | null = null;
@@ -200,6 +203,7 @@ export class TemporalAccumulator {
         tile_search: Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE),
       };
       for (const entry of ALIGN_PASSES) {
+        if (entry === 'tile_search' && !this.tilesEnabled) continue;
         const pass = encoder.beginComputePass({ label: `temporal alignment ${entry}` });
         pass.setPipeline(this.alignPipelines[entry]);
         pass.setBindGroup(0, groups.align);
