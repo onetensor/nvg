@@ -27,6 +27,23 @@ def quantize(value: np.ndarray) -> np.ndarray:
     return np.rint(np.clip(value, 0, 1) * 65535).astype(np.uint16)
 
 
+def prescale(encoded: np.ndarray, factor: int) -> np.ndarray:
+    """Area-downsamples a LibRaw-encoded (BT.709 gamma) image in linear light.
+
+    The phone simulation treats each stored pixel as one phone pixel. A Sony
+    frame is ~4256 px wide while the iPhone delivers the whole scene in 1280,
+    so storing the SID data at 1/3 scale makes scene content the size it is
+    in the app instead of ~3x magnified.
+    """
+    if factor == 1:
+        return encoded
+    value = np.clip(encoded, 0, 1)
+    linear = np.where(value < 0.081, value / 4.5, ((value + 0.099) / 1.099) ** (1 / 0.45))
+    height, width = (linear.shape[0] // factor) * factor, (linear.shape[1] // factor) * factor
+    linear = linear[:height, :width].reshape(height // factor, factor, width // factor, factor, 3).mean(axis=(1, 3))
+    return np.where(linear < 0.018, linear * 4.5, 1.099 * np.maximum(linear, 1e-12) ** 0.45 - 0.099).astype(np.float32)
+
+
 def group_records(records: list[Record]) -> list[tuple[Path, list[Record]]]:
     groups: dict[Path, list[Record]] = defaultdict(list)
     for record in records:
@@ -44,13 +61,14 @@ def build_group(
     patch_size: int,
     max_frames: int,
     seed: int,
+    scale: int = 1,
 ) -> int:
     outputs = [destination / f"{group_index:04d}-{crop:02d}.npz" for crop in range(crops)]
     if all(path.exists() and path.stat().st_size > 0 for path in outputs):
         return 0
     rng = random.Random(seed + group_index * 1_000_003)
-    target = image_rgb(target_path)
-    shorts = [image_rgb(record.input_path) for record in records]
+    target = prescale(image_rgb(target_path), scale)
+    shorts = [prescale(image_rgb(record.input_path), scale) for record in records]
     height = min(target.shape[0], *(short.shape[0] for short in shorts))
     width = min(target.shape[1], *(short.shape[1] for short in shorts))
     for crop, output in enumerate(outputs):
@@ -90,7 +108,7 @@ def build_split(args: argparse.Namespace, split: str, crops: int, offset: int) -
     with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, args.workers)) as executor:
         futures = [executor.submit(
             build_group, index, target, records, destination, split,
-            crops, args.patch_size, args.max_frames, args.seed + offset,
+            crops, args.patch_size, args.max_frames, args.seed + offset, args.prescale,
         ) for index, (target, records) in enumerate(groups)]
         for future in concurrent.futures.as_completed(futures):
             future.result()
@@ -98,7 +116,7 @@ def build_split(args: argparse.Namespace, split: str, crops: int, offset: int) -
             if completed % 10 == 0 or completed == len(groups):
                 print(f"BURST_PROGRESS split={split} scenes={completed}/{len(groups)}", flush=True)
     return {"split": split, "scenes": len(groups), "crops": len(groups) * crops,
-            "patch_size": args.patch_size, "max_frames": args.max_frames}
+            "patch_size": args.patch_size, "max_frames": args.max_frames, "prescale": args.prescale}
 
 
 def main() -> None:
@@ -111,6 +129,8 @@ def main() -> None:
     parser.add_argument("--max-eval-scenes", type=int, default=50)
     parser.add_argument("--max-frames", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--prescale", type=int, default=1,
+                        help="Area-downsample the Sony frames first; 3 matches the iPhone's 1280 px field of view")
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
     reports = [

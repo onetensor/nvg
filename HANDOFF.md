@@ -1,6 +1,6 @@
 # SID Live — Agent Handoff
 
-Last updated: 2026-10-29 (America/Toronto)
+Last updated: 2026-10-30 (America/Toronto)
 
 This is the operational handoff for continuing work on SID Live. Read this
 before changing the camera path, model packaging, training setup, or deployment.
@@ -332,6 +332,35 @@ for higher resolution at the same FPS; then asked for object outlines.
   (40k steps, lr 2e-4, teacher mono13 weight 0.5, LPIPS 0.1), then
   `mono-w12-outline` (15k steps, outline weight 0.3), all under
   `/workspace/nvg-direct-run/`.
+
+## Realistic-scale training, display options (2026-10-29/30)
+
+- **Crop scale was wrong.** The phone simulation treats each stored SID pixel
+  as one phone pixel, but a SID frame is ~4256 px wide versus the iPhone's
+  1280, so training crops showed scene content ~3.3x magnified relative to
+  what the app sees. `build_burst_dataset.py --prescale 3` area-downsamples
+  the SID data in linear light before cropping. The p3 dataset (`--prescale 3
+  --patch-size 768 --train-crops 4 --eval-crops 2 --max-frames 8`) lives at
+  `/root/nvg-bursts-p3` on the pod (container disk, not the volume; rebuild
+  it). The v3b teacher dropped from 24.19 to 22.09 dB when scored at the
+  realistic scale, confirming the mismatch.
+- **Shipped (`sidDirect` = `sid-direct-mono-w12-p3`).** The w32 teacher
+  fine-tuned 15k steps on p3 (`p3-teacher`), then the w12 student fine-tuned
+  15k steps from `v3b-student`, distilled from it (`p3-student`). On the p3
+  test split at 2x (`models/evaluation/mono-realistic-scale.json`), PSNR /
+  LPIPS, previous w12 → new w12: f1_n2 20.53 / 0.425 → 21.35 / 0.381;
+  f8_n2 21.32 / 0.370 → 22.12 / 0.310; f8_n6 22.09 / 0.359 → 23.18 / 0.291.
+  The plain v3b student (old scale, 30k steps) sits between them. The p3
+  teacher is `?model=mono-w32-p3` (180p, 15.5 MB) and the previous default is
+  `?model=mono-w12-v1`. The outline variant still fuses the previous w12.
+- **Dead ends.** Attention gates plus a PatchGAN loss on the w12 student
+  matched the plain student in PSNR but visibly crushed shadows; dropped.
+  Per-tile alignment (`?align=tiles`) warped too much while walking; the
+  default is whole-frame alignment again.
+- **App.** Resolution options 540p/720p/1080p (`Camera.configure` re-applies
+  constraints; Canvas2D readback grows on demand), an FPS cap that limits both
+  the camera frame rate and processing, white phosphor and blue tints, and a
+  flat retro UI whose accent follows the tint.
 
 ## What the user wants
 
