@@ -4,7 +4,8 @@ export type ModelVariant = 'joint' | 'original' | 'direct';
 export type ViewMode = 'original' | 'enhanced' | 'split';
 export type ResolutionChoice = 'auto' | '180p' | '360p' | '540p' | '720p' | '1080p';
 export type TemporalLevel = 'off' | 'low' | 'medium' | 'high' | 'hold';
-export type TargetMode = '30' | '15' | 'quality';
+/** Processing frame-rate ceiling; 'off' runs as fast as the camera and GPU allow. */
+export type FpsCap = 'off' | '24' | '20' | '15' | '10';
 export type CameraInputPath = 'external-texture' | 'video-copy' | 'video-frame-copy' | 'canvas-copy';
 
 /** How model output is shown: 3 = RGB; 1 = luminance through a tint; 2 = luminance plus outline logits. */

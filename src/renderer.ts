@@ -52,7 +52,7 @@ export class Canvas2DRenderer {
   private readonly context: CanvasRenderingContext2D;
   private readonly pipeline: GPUComputePipeline;
   private readonly params: GPUBuffer;
-  private readonly packed: GPUBuffer;
+  private packed: GPUBuffer;
   private readonly slots: ReadbackSlot[];
   private source: GPUBuffer | null = null;
   private bindGroup: GPUBindGroup | null = null;
@@ -60,7 +60,8 @@ export class Canvas2DRenderer {
   private presentedSequence = 0;
   private lastStats: OutputStats | undefined;
   private disposed = false;
-  private readonly maximumBytes = 640 * 360 * 4;
+  /** Current staging capacity; grows when a larger resolution is selected. */
+  private capacity = 640 * 360 * 4;
   private readonly displayIntervals = new RollingAverage(30);
   private readonly readbackTimes = new RollingAverage(30);
   private lastPresentedAt = 0;
@@ -83,19 +84,12 @@ export class Canvas2DRenderer {
       size: 48,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    // Production exposes 180p and 360p. Three staging buffers let mapping
-    // overlap subsequent inference without allocating memory per frame.
-    this.packed = device.createBuffer({
-      label: 'SID packed RGBA',
-      size: this.maximumBytes,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
+    // Sized for 360p and grown on demand (540p-1080p are opt-in). Three
+    // staging buffers let mapping overlap subsequent inference without
+    // allocating memory per frame.
+    this.packed = this.packedBuffer();
     this.slots = Array.from({ length: 3 }, (_, index) => ({
-      buffer: device.createBuffer({
-        label: `SID asynchronous readback ${index + 1}`,
-        size: this.maximumBytes,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      }),
+      buffer: this.readbackBuffer(index),
       busy: false,
       pixels: null,
       width: 0,
@@ -110,13 +104,22 @@ export class Canvas2DRenderer {
     }
 
     const byteLength = geometry.width * geometry.height * 4;
-    if (byteLength > this.maximumBytes) {
-      throw new Error(`Display frame ${geometry.width}×${geometry.height} exceeds the 640×360 readback capacity.`);
+    if (byteLength > this.capacity) {
+      // destroy() lets already submitted work finish; bind groups are rebuilt below.
+      this.capacity = byteLength;
+      this.packed.destroy();
+      this.packed = this.packedBuffer();
+      this.bindGroup = null;
     }
     const slot = this.slots.find((candidate) => !candidate.busy);
     if (!slot) {
       this.presentationDropped += 1;
       return this.lastStats;
+    }
+    if (slot.buffer.size < byteLength) {
+      // Idle slots are unmapped, so the old buffer can go.
+      slot.buffer.destroy();
+      slot.buffer = this.readbackBuffer(this.slots.indexOf(slot));
     }
     const values = displayParams(geometry, display);
     this.device.queue.writeBuffer(this.params, 0, values);
@@ -144,6 +147,22 @@ export class Canvas2DRenderer {
     const sequence = ++this.sequence;
     void this.present(slot, byteLength, geometry.width, geometry.height, sequence, performance.now());
     return this.lastStats;
+  }
+
+  private packedBuffer(): GPUBuffer {
+    return this.device.createBuffer({
+      label: 'SID packed RGBA',
+      size: this.capacity,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+  }
+
+  private readbackBuffer(index: number): GPUBuffer {
+    return this.device.createBuffer({
+      label: `SID asynchronous readback ${index + 1}`,
+      size: this.capacity,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
   }
 
   /**

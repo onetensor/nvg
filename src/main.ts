@@ -7,7 +7,7 @@ import { preloadModel } from './inference/onnxWebgpu';
 import { SIDPipeline } from './inference/sid';
 import { isAppleMobileWebKit } from './platform';
 import { formatDebug, Profiler } from './profiler';
-import type { AdapterMode, DirectModelAsset, LuminanceStats, MonoTint, OutlineMode, PopLevel, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, TargetMode } from './types';
+import type { AdapterMode, DirectModelAsset, LuminanceStats, MonoTint, OutlineMode, PopLevel, ModelGeometry, ModelMetadata, ModelVariant, PipelineResult, ResolutionChoice, FpsCap } from './types';
 import { applyView, controls, selectedValues, setStatus } from './ui/controls';
 
 const ui = controls();
@@ -26,6 +26,7 @@ let geometry: ModelGeometry = modelGeometry(adaptiveResolution.current);
 let manualGain = sliderToGain(Number(ui.gain.value));
 let currentGain = manualGain;
 let lastDebugUpdate = 0;
+let lastProcessedAt = 0;
 let frameErrors = 0;
 let activeModel: ModelVariant = 'joint';
 let metadataPromise: Promise<ModelMetadata> | null = null;
@@ -141,15 +142,34 @@ function selectedResolution(choice: ResolutionChoice): ModelGeometry {
   return modelGeometry(orientResolution(resolution, cameraInfo.height > cameraInfo.width));
 }
 
-function targetBudget(mode: TargetMode): number {
-  if (mode === '30') return 1000 / 30;
-  if (mode === '15') return 1000 / 15;
-  return 82;
+function capRate(cap: FpsCap): number {
+  return cap === 'off' ? 30 : Number(cap);
+}
+
+function targetBudget(cap: FpsCap): number {
+  return 1000 / capRate(cap);
+}
+
+/**
+ * Asks the camera for 1080p only when 1080p processing is selected (the
+ * default 720p stream is cheaper to ingest) and for at most the capped frame
+ * rate. Failures leave the stream as it was; processing is paced regardless.
+ */
+async function configureCamera(): Promise<void> {
+  const state = selectedValues(ui);
+  try {
+    cameraInfo = await camera.configure(state.resolution === '1080p' ? 1920 : 1280, capRate(state.fpsCap));
+  } catch (error) {
+    console.warn('Camera constraints were not applied', error);
+  }
+  geometry = selectedResolution(state.resolution);
+  pipeline?.resetTemporal();
 }
 
 function setGeometry(choice: ResolutionChoice): void {
   geometry = selectedResolution(choice);
   pipeline?.resetTemporal();
+  void configureCamera();
 }
 
 function updateGainUi(): void {
@@ -310,6 +330,14 @@ async function processFrame(now: number): Promise<void> {
     return;
   }
   const state = selectedValues(ui);
+  const cap = state.fpsCap;
+  // Software pacing backs up the camera constraint, which browsers may ignore.
+  // The slack keeps 30 fps delivery jitter from skipping frames a cap allows.
+  if (cap !== 'off' && now - lastProcessedAt < 1000 / Number(cap) - 6) {
+    updateDebug(now, state.adapter);
+    return;
+  }
+  lastProcessedAt = now;
   if (!pipeline.ready) {
     // The GPU has not finished the frames already queued. Skipping here costs
     // nothing; processing anyway would only grow the queue and drop the result.
@@ -335,7 +363,7 @@ async function processFrame(now: number): Promise<void> {
       console.warn('Input statistics readback failed.', error);
     });
     if (state.resolution === 'auto') {
-      const changed = adaptiveResolution.observe(result.timing.total, targetBudget(state.target));
+      const changed = adaptiveResolution.observe(result.timing.total, targetBudget(state.fpsCap));
       if (changed) {
         geometry = modelGeometry(orientResolution(changed, cameraInfo.height > cameraInfo.width));
         pipeline.resetTemporal();
@@ -359,6 +387,8 @@ async function start(): Promise<void> {
   setStatus(ui, 'Requesting rear camera…');
   try {
     cameraInfo = await camera.start();
+    const initial = selectedValues(ui);
+    if (initial.fpsCap !== 'off' || initial.resolution === '1080p') await configureCamera();
     ui.emptyState.hidden = true;
     setStatus(ui, `Camera ${cameraInfo.width}×${cameraInfo.height}`);
     try {
@@ -392,6 +422,7 @@ ui.view.addEventListener('change', () => {
 });
 ui.adapter.addEventListener('change', () => pipeline?.resetTemporal());
 ui.resolution.addEventListener('change', () => setGeometry(selectedValues(ui).resolution));
+ui.fpsCap.addEventListener('change', () => { void configureCamera(); });
 ui.temporal.addEventListener('change', () => pipeline?.resetTemporal());
 ui.tint.addEventListener('change', () => {
   if (pipeline) pipeline.tint = ui.tint.value as MonoTint;

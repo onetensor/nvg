@@ -59,13 +59,18 @@
             <select id="resolution">
               <option value="180p" selected>180p · fastest</option>
               <option value="360p">360p · quality</option>
+              <option value="540p">540p · slow</option>
+              <option value="720p">720p · slower</option>
+              <option value="1080p">1080p · experimental</option>
             </select>
           </label>
-          <label>Target
-            <select id="target-fps">
-              <option value="30">30 FPS</option>
+          <label>FPS cap
+            <select id="fps-cap">
+              <option value="off" selected>Off</option>
+              <option value="24">24 FPS</option>
+              <option value="20">20 FPS</option>
               <option value="15">15 FPS</option>
-              <option value="quality">Max quality</option>
+              <option value="10">10 FPS</option>
             </select>
           </label>
           <label>Mono display

@@ -1,4 +1,4 @@
-import type { AdapterMode, ModelVariant, ResolutionChoice, TargetMode, TemporalLevel, ViewMode } from '../types';
+import type { AdapterMode, ModelVariant, ResolutionChoice, FpsCap, TemporalLevel, ViewMode } from '../types';
 
 function required<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -20,7 +20,7 @@ export interface Controls {
   model: HTMLSelectElement;
   adapter: HTMLSelectElement;
   resolution: HTMLSelectElement;
-  target: HTMLSelectElement;
+  fpsCap: HTMLSelectElement;
   temporal: HTMLSelectElement;
   tint: HTMLSelectElement;
   outline: HTMLSelectElement;
@@ -53,7 +53,7 @@ export function controls(): Controls {
     model: required('#model-variant'),
     adapter: required('#adapter-mode'),
     resolution: required('#resolution'),
-    target: required('#target-fps'),
+    fpsCap: required('#fps-cap'),
     temporal: required('#temporal'),
     tint: required('#tint'),
     outline: required('#outline'),
@@ -77,7 +77,7 @@ export function selectedValues(ui: Controls): {
   model: ModelVariant;
   adapter: AdapterMode;
   resolution: ResolutionChoice;
-  target: TargetMode;
+  fpsCap: FpsCap;
   temporal: TemporalLevel;
 } {
   return {
@@ -85,7 +85,7 @@ export function selectedValues(ui: Controls): {
     model: ui.model.value as ModelVariant,
     adapter: ui.adapter.value as AdapterMode,
     resolution: ui.resolution.value as ResolutionChoice,
-    target: ui.target.value as TargetMode,
+    fpsCap: ui.fpsCap.value as FpsCap,
     temporal: ui.temporal.value as TemporalLevel,
   };
 }
