@@ -5,6 +5,27 @@ from torch import nn
 from torch.nn import functional as F
 
 
+class AttentionGate(nn.Module):
+    """Additive attention on a U-Net skip connection, as a residual gate.
+
+    The skip is scaled by 1 + tanh(z) with z computed from the skip and the
+    upsampled decoder features. The last layer starts at zero, so a freshly
+    gated network reproduces its ungated source exactly.
+    """
+
+    def __init__(self, skip_channels: int, gate_channels: int) -> None:
+        super().__init__()
+        inner = max(4, skip_channels // 2)
+        self.skip = nn.Conv2d(skip_channels, inner, 1)
+        self.gate = nn.Conv2d(gate_channels, inner, 1, bias=False)
+        self.score = nn.Conv2d(inner, 1, 1)
+        nn.init.zeros_(self.score.weight)
+        nn.init.zeros_(self.score.bias)
+
+    def forward(self, skip: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+        return skip * (1 + torch.tanh(self.score(F.relu(self.skip(skip) + self.gate(gate)))))
+
+
 class SIDUNet(nn.Module):
     """NCHW equivalent of the official Sony SID TensorFlow network.
 
@@ -12,13 +33,16 @@ class SIDUNet(nn.Module):
     official architecture. ``in_channels=12`` accepts 2x2-packed linear RGB
     directly, a smaller ``width`` scales every level uniformly, and
     ``out_channels=4`` produces a single (luminance) output plane.
+    ``attention`` adds residual attention gates on the four skip connections.
     """
 
-    def __init__(self, in_channels: int = 4, width: int = 32, out_channels: int = 12) -> None:
+    def __init__(self, in_channels: int = 4, width: int = 32, out_channels: int = 12,
+                 attention: bool = False) -> None:
         super().__init__()
         self.in_channels = in_channels
         self.width = width
         self.out_channels = out_channels
+        self.attention = attention
         c1, c2, c3, c4, c5 = (width * factor for factor in (1, 2, 4, 8, 16))
         self.conv1_1 = nn.Conv2d(in_channels, c1, 3, padding=1)
         self.conv1_2 = nn.Conv2d(c1, c1, 3, padding=1)
@@ -43,6 +67,16 @@ class SIDUNet(nn.Module):
         self.conv9_1 = nn.Conv2d(c2, c1, 3, padding=1)
         self.conv9_2 = nn.Conv2d(c1, c1, 3, padding=1)
         self.conv10 = nn.Conv2d(c1, out_channels, 1)
+        if attention:
+            self.gate6 = AttentionGate(c4, c4)
+            self.gate7 = AttentionGate(c3, c3)
+            self.gate8 = AttentionGate(c2, c2)
+            self.gate9 = AttentionGate(c1, c1)
+
+    def _skip(self, level: int, skip: torch.Tensor, upsampled: torch.Tensor) -> torch.Tensor:
+        if not self.attention:
+            return skip
+        return getattr(self, f"gate{level}")(skip, upsampled)
 
     @staticmethod
     def activate(value: torch.Tensor) -> torch.Tensor:
@@ -59,13 +93,17 @@ class SIDUNet(nn.Module):
         conv4 = self.activate(self.conv4_2(conv4))
         conv5 = self.activate(self.conv5_1(F.max_pool2d(conv4, 2)))
         conv5 = self.activate(self.conv5_2(conv5))
-        conv6 = self.activate(self.conv6_1(torch.cat((self.up6(conv5), conv4), dim=1)))
+        up = self.up6(conv5)
+        conv6 = self.activate(self.conv6_1(torch.cat((up, self._skip(6, conv4, up)), dim=1)))
         conv6 = self.activate(self.conv6_2(conv6))
-        conv7 = self.activate(self.conv7_1(torch.cat((self.up7(conv6), conv3), dim=1)))
+        up = self.up7(conv6)
+        conv7 = self.activate(self.conv7_1(torch.cat((up, self._skip(7, conv3, up)), dim=1)))
         conv7 = self.activate(self.conv7_2(conv7))
-        conv8 = self.activate(self.conv8_1(torch.cat((self.up8(conv7), conv2), dim=1)))
+        up = self.up8(conv7)
+        conv8 = self.activate(self.conv8_1(torch.cat((up, self._skip(8, conv2, up)), dim=1)))
         conv8 = self.activate(self.conv8_2(conv8))
-        conv9 = self.activate(self.conv9_1(torch.cat((self.up9(conv8), conv1), dim=1)))
+        up = self.up9(conv8)
+        conv9 = self.activate(self.conv9_1(torch.cat((up, self._skip(9, conv1, up)), dim=1)))
         conv9 = self.activate(self.conv9_2(conv9))
         return F.pixel_shuffle(self.conv10(conv9), 2)
 
@@ -78,6 +116,7 @@ def load_sid(path: str, device: torch.device | str = "cpu") -> SIDUNet:
         in_channels=int(payload.get("in_channels", 4)) if wrapped else 4,
         width=int(payload.get("width", 32)) if wrapped else 32,
         out_channels=int(payload.get("out_channels", 12)) if wrapped else 12,
+        attention=bool(payload.get("attention", False)) if wrapped else False,
     ).to(device)
     model.load_state_dict(state, strict=True)
     model.noise_input = str(payload.get("noise_input", "count")) if wrapped else "count"
@@ -162,6 +201,18 @@ def to_mono(source: SIDUNet) -> SIDUNet:
     state["conv10.weight"] = sum(w * weight[c * 4:(c + 1) * 4] for c, w in enumerate(LUMA_WEIGHTS))
     state["conv10.bias"] = sum(w * bias[c * 4:(c + 1) * 4] for c, w in enumerate(LUMA_WEIGHTS))
     model.load_state_dict(state, strict=True)
+    return model
+
+
+def add_attention(source: SIDUNet) -> SIDUNet:
+    """A copy with residual attention gates that starts out identical to ``source``."""
+    if source.attention:
+        return source
+    model = SIDUNet(in_channels=source.in_channels, width=source.width, out_channels=source.out_channels,
+                    attention=True)
+    missing, unexpected = model.load_state_dict(source.state_dict(), strict=False)
+    if unexpected or any(not key.startswith("gate") for key in missing):
+        raise ValueError("Unexpected state when adding attention gates")
     return model
 
 

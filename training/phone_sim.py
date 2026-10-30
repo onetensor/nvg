@@ -214,7 +214,9 @@ def simulate_phone_burst(
     # gain (the app's cap), weighted towards the darkest cases; each short is
     # normalized by its own exposure ratio.
     exposure = 0.3 + 2.2 * math.sqrt(rng.random())
-    phone_gain = (ratios.to(device) / 10 ** exposure).clamp_min(1.0)
+    # No clamp: every frame must land at the same brightness, even when the
+    # simulated phone exposure is darker than a Sony short (gain below 1).
+    phone_gain = ratios.to(device) / 10 ** exposure
     value = linear * phone_gain[:, None, None, None]
 
     # A phone sensor at 1/30 s collects far fewer photons than the Sony at
@@ -410,13 +412,18 @@ SEQUENCE_LENGTHS = (1, 2, 3, 4, 6, 8, 8, 16, 32)
 
 
 def _sequence(rng: random.Random, available: int, length: int, shuffle: bool) -> list[int]:
-    """Frame indices for a sequence: each real frame once, then repeats."""
+    """Frame indices for a sequence: each real frame once, then repeats.
+
+    Evaluation ends every sequence on frame 0, so the current frame (which sets
+    the gain and the target) is the same whatever the frame count.
+    """
+    if not shuffle:
+        return [index % available for index in range(length)][::-1]
     order = list(range(available))
-    if shuffle:
-        rng.shuffle(order)
+    rng.shuffle(order)
     sequence = order[:length]
     while len(sequence) < length:
-        sequence.append(rng.randrange(available) if shuffle else len(sequence) % available)
+        sequence.append(rng.randrange(available))
     return sequence
 
 
